@@ -1,0 +1,47 @@
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+const { ok } = require('./utils/errors');
+const path = require('path');
+
+const { router: authRoutes } = require('./routes/auth');
+const adminRoutes = require('./routes/admin');
+const trainerRouter = require('./routes/trainer/index');
+const trainerApplyRoutes = require('./routes/trainer/apply');
+const adminTrainerApplicationsRoutes = require('./routes/admin/trainer-applications');
+const publicRoutes = require('./routes/public');
+const userRoutes = require('./routes/user');
+
+const app = express();
+
+// Middleware
+app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : '*' }));
+app.use(morgan('dev'));
+
+// Increase payload limits for file uploads
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+// Static uploads
+app.use('/api/v1/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Health check route
+app.get('/healthz', (req, res) => {
+    ok(res, { message: 'API is healthy' });
+});
+
+// API Routes
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/admin/trainer-applications', adminTrainerApplicationsRoutes);
+// Public trainer application routes (must come before protected trainer routes)
+app.use('/api/v1/trainer/apply', trainerApplyRoutes);
+// Backward compat if previous default file existed
+app.use('/api/v1/trainer', trainerRouter);
+app.use('/api/v1/user', userRoutes);
+app.use('/api/v1/public', publicRoutes);
+
+module.exports = app;
+
+
+

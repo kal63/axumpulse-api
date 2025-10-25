@@ -1,0 +1,23 @@
+{
+  "development": {
+    "username": "root",
+    "password": null,
+    "database": "axumpulse",
+    "host": "127.0.0.1",
+    "dialect": "mysql",
+    "timezone": "+00:00"
+  },
+  "test": {
+    "username": "root",
+    "password": null,
+    "database": "axumpulse_test",
+    "host": "127.0.0.1",
+    "dialect": "mysql",
+    "timezone": "+00:00"
+  },
+  "production": {
+    "use_env_variable": "MYSQL_URI",
+    "dialect": "mysql",
+    "timezone": "+00:00"
+  }
+}
