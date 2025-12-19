@@ -37,6 +37,7 @@ module.exports = (sequelize, DataTypes) => {
         // Account Status & Roles
         isTrainer: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
         isAdmin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+        isMedical: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
         status: { type: DataTypes.STRING(16), allowNull: false, defaultValue: 'active' },
 
         // Activity Tracking
@@ -74,12 +75,23 @@ module.exports = (sequelize, DataTypes) => {
     User.associate = (models) => {
         User.hasOne(models.SubscriptionAccess, { foreignKey: 'userId' })
         User.hasOne(models.Trainer, { foreignKey: 'userId' })
+        User.hasOne(models.MedicalProfessional, { foreignKey: 'userId', as: 'medicalProfessional' })
         User.hasOne(models.UserProfile, { foreignKey: 'userId', as: 'profile' })
+        User.hasOne(models.UserMedicalProfile, { foreignKey: 'userId', as: 'medicalProfile' })
         User.hasMany(models.UserContentProgress, { foreignKey: 'userId', as: 'contentProgress' })
         User.hasMany(models.UserWorkoutPlanProgress, { foreignKey: 'userId', as: 'workoutProgress' })
         User.hasMany(models.UserExerciseProgress, { foreignKey: 'userId', as: 'exerciseProgress' })
         User.hasMany(models.UserChallengeProgress, { foreignKey: 'userId', as: 'challengeProgress' })
         User.hasMany(models.UserAchievement, { foreignKey: 'userId', as: 'achievements' })
+
+        // Medical layer
+        User.hasMany(models.IntakeResponse, { foreignKey: 'userId', as: 'intakeResponses' })
+        User.hasMany(models.TriageRun, { foreignKey: 'userId', as: 'triageRuns' })
+        User.hasMany(models.MedicalQuestion, { foreignKey: 'userId', as: 'medicalQuestions' })
+        User.hasMany(models.ConsultSlot, { foreignKey: 'providerId', as: 'consultSlots' })
+        User.hasMany(models.ConsultBooking, { foreignKey: 'userId', as: 'consultBookings' })
+        User.hasMany(models.HealthDataPoint, { foreignKey: 'userId', as: 'healthDataPoints' })
+        User.hasMany(models.HealthAlert, { foreignKey: 'userId', as: 'healthAlerts' })
     }
 
     return User

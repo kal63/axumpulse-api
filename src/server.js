@@ -11,6 +11,8 @@ const trainerApplyRoutes = require('./routes/trainer/apply');
 const adminTrainerApplicationsRoutes = require('./routes/admin/trainer-applications');
 const publicRoutes = require('./routes/public');
 const userRoutes = require('./routes/user');
+const medicalRoutes = require('./routes/medical');
+const medicalApplyRoutes = require('./routes/medical/apply');
 
 const app = express();
 
@@ -38,6 +40,9 @@ app.use('/api/v1/admin/trainer-applications', adminTrainerApplicationsRoutes);
 app.use('/api/v1/trainer/apply', trainerApplyRoutes);
 // Backward compat if previous default file existed
 app.use('/api/v1/trainer', trainerRouter);
+// Public medical application routes (must come before protected medical routes)
+app.use('/api/v1/medical/apply', medicalApplyRoutes);
+app.use('/api/v1/medical', medicalRoutes);
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/public', publicRoutes);
 

@@ -23,7 +23,64 @@ const UserChallengeProgress = require('./UserChallengeProgress')(sequelize, Data
 const Achievement = require('./Achievement')(sequelize, DataTypes)
 const UserAchievement = require('./UserAchievement')(sequelize, DataTypes)
 
-const models = { Language, User, UserProfile, Trainer, TrainerApplication, CertificationFile, SubscriptionAccess, Challenge, Reward, Content, WorkoutPlan, WorkoutExercise, UserContentProgress, UserWorkoutPlanProgress, UserExerciseProgress, UserChallengeProgress, Achievement, UserAchievement }
+// Medical layer (new)
+const MedicalProfessionalApplication = require('./MedicalProfessionalApplication')(sequelize, DataTypes)
+const MedicalCredentialFile = require('./MedicalCredentialFile')(sequelize, DataTypes)
+const MedicalProfessional = require('./MedicalProfessional')(sequelize, DataTypes)
+const UserMedicalProfile = require('./UserMedicalProfile')(sequelize, DataTypes)
+const IntakeForm = require('./IntakeForm')(sequelize, DataTypes)
+const IntakeResponse = require('./IntakeResponse')(sequelize, DataTypes)
+const TriageRule = require('./TriageRule')(sequelize, DataTypes)
+const TriageRun = require('./TriageRun')(sequelize, DataTypes)
+const MedicalQuestion = require('./MedicalQuestion')(sequelize, DataTypes)
+const MedicalAnswer = require('./MedicalAnswer')(sequelize, DataTypes)
+const MedicalAttachment = require('./MedicalAttachment')(sequelize, DataTypes)
+const ConsultSlot = require('./ConsultSlot')(sequelize, DataTypes)
+const ConsultBooking = require('./ConsultBooking')(sequelize, DataTypes)
+const ConsultNote = require('./ConsultNote')(sequelize, DataTypes)
+const HealthDataPoint = require('./HealthDataPoint')(sequelize, DataTypes)
+const HealthDataRollup = require('./HealthDataRollup')(sequelize, DataTypes)
+const HealthAlert = require('./HealthAlert')(sequelize, DataTypes)
+
+const models = {
+    Language,
+    User,
+    UserProfile,
+    Trainer,
+    TrainerApplication,
+    CertificationFile,
+    SubscriptionAccess,
+    Challenge,
+    Reward,
+    Content,
+    WorkoutPlan,
+    WorkoutExercise,
+    UserContentProgress,
+    UserWorkoutPlanProgress,
+    UserExerciseProgress,
+    UserChallengeProgress,
+    Achievement,
+    UserAchievement,
+
+    // Medical layer exports
+    MedicalProfessionalApplication,
+    MedicalCredentialFile,
+    MedicalProfessional,
+    UserMedicalProfile,
+    IntakeForm,
+    IntakeResponse,
+    TriageRule,
+    TriageRun,
+    MedicalQuestion,
+    MedicalAnswer,
+    MedicalAttachment,
+    ConsultSlot,
+    ConsultBooking,
+    ConsultNote,
+    HealthDataPoint,
+    HealthDataRollup,
+    HealthAlert
+}
 
 // Associations
 Object.values(models).forEach((model) => {

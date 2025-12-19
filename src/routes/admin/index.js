@@ -47,6 +47,7 @@ router.use('/users', require('./users'));
 router.use('/challenges', require('./challenges'));
 router.use('/rewards', require('./rewards'));
 router.use('/moderation', require('./moderation'));
+router.use('/medical-applications', require('./medical-applications'));
 
 module.exports = router;
 

@@ -11,6 +11,7 @@ const { router: engagementRouter } = require('./engagement')
 const { router: progressRouter } = require('./progress')
 const { router: profileRouter } = require('./profile')
 const { router: settingsRouter } = require('./settings')
+const medicalRouter = require('./medical')
 
 // Mount routes
 router.use('/content', contentRouter)
@@ -20,6 +21,7 @@ router.use('/engagement', engagementRouter)
 router.use('/progress', progressRouter)
 router.use('/profile', profileRouter)
 router.use('/settings', settingsRouter)
+router.use('/medical', medicalRouter)
 
 module.exports = router
 
