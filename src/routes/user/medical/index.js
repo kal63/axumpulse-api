@@ -20,7 +20,8 @@ const {
   User
 } = require('../../../models')
 const { Op } = require('sequelize')
-const { evaluateTriageRules } = require('../../../utils/triageEngine')
+//const { evaluateTriageRules } = require('../../../utils/triageEngine')
+const { evaluateTriageWithGemini } = require('../../../utils/geminiTriage')
 
 // All routes require authentication
 router.use(requireAuth)
@@ -157,8 +158,11 @@ router.post('/intake', async (req, res) => {
     // Get user medical profile for triage
     const medicalProfile = await UserMedicalProfile.findOne({ where: { userId } })
 
-    // Run triage evaluation
-    const triageResult = await evaluateTriageRules(response, medicalProfile)
+    // Run triage evaluation using Gemini
+    const triageResult = await evaluateTriageWithGemini(response, medicalProfile, {
+      includeRules: true, // Include triage rules as context for Gemini
+      maxRetries: 3
+    })
 
     ok(res, {
       intakeResponse: response,
