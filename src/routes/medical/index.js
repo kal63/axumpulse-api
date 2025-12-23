@@ -17,7 +17,8 @@ const {
   User,
   UserMedicalProfile,
   MedicalProfessional,
-  IntakeResponse
+  IntakeResponse,
+  IntakeForm
 } = require('../../models')
 const { Op } = require('sequelize')
 
@@ -279,10 +280,35 @@ router.post('/consults/slots', async (req, res) => {
       return err(res, { code: 'VALIDATION_ERROR', message: 'startAt, endAt, and type are required' }, 400)
     }
 
+    // Validate type enum
+    const validTypes = ['quick', 'full', 'follow_up']
+    if (!validTypes.includes(type)) {
+      return err(res, { 
+        code: 'VALIDATION_ERROR', 
+        message: `Invalid type. Must be one of: ${validTypes.join(', ')}` 
+      }, 400)
+    }
+
+    // Validate dates
+    const startDate = new Date(startAt)
+    const endDate = new Date(endAt)
+    
+    if (isNaN(startDate.getTime())) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid startAt date format' }, 400)
+    }
+    
+    if (isNaN(endDate.getTime())) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid endAt date format' }, 400)
+    }
+
+    if (endDate <= startDate) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'endAt must be after startAt' }, 400)
+    }
+
     const slot = await ConsultSlot.create({
       providerId,
-      startAt: new Date(startAt),
-      endAt: new Date(endAt),
+      startAt: startDate,
+      endAt: endDate,
       type,
       timezone: timezone || null,
       status: 'open'
@@ -291,7 +317,22 @@ router.post('/consults/slots', async (req, res) => {
     ok(res, slot)
   } catch (error) {
     console.error('Error creating slot:', error)
-    err(res, error)
+    
+    // Provide more detailed error message
+    let errorMessage = 'An unexpected error occurred.'
+    if (error.name === 'SequelizeValidationError') {
+      errorMessage = error.errors?.map(e => e.message).join(', ') || 'Validation error'
+    } else if (error.name === 'SequelizeDatabaseError') {
+      errorMessage = 'Database error occurred'
+    } else if (error.message) {
+      errorMessage = error.message
+    }
+    
+    err(res, { 
+      code: 'VALIDATION_ERROR', 
+      message: errorMessage,
+      details: error.errors || {}
+    }, 400)
   }
 })
 
@@ -466,6 +507,11 @@ router.post('/consults/bookings/:id/notes', async (req, res) => {
       })
     }
 
+    // Mark booking as completed when notes are saved (if not already canceled)
+    if (booking.status === 'booked') {
+      await booking.update({ status: 'completed' })
+    }
+
     ok(res, note)
   } catch (error) {
     console.error('Error creating/updating consult notes:', error)
@@ -497,6 +543,34 @@ router.get('/consults/bookings/:id/notes', async (req, res) => {
     ok(res, note)
   } catch (error) {
     console.error('Error fetching consult notes:', error)
+    err(res, error)
+  }
+})
+
+// PUT /api/v1/medical/consults/bookings/:id/complete - Mark consult as completed
+router.put('/consults/bookings/:id/complete', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    const { id } = req.params
+
+    const booking = await ConsultBooking.findOne({
+      where: { id },
+      include: [{ model: ConsultSlot, as: 'slot', where: { providerId }, required: true }]
+    })
+
+    if (!booking) {
+      return err(res, { code: 'NOT_FOUND', message: 'Booking not found' }, 404)
+    }
+
+    if (booking.status === 'canceled') {
+      return err(res, { code: 'INVALID_OPERATION', message: 'Cannot complete a canceled booking' }, 400)
+    }
+
+    await booking.update({ status: 'completed' })
+
+    ok(res, booking)
+  } catch (error) {
+    console.error('Error completing booking:', error)
     err(res, error)
   }
 })
@@ -591,14 +665,55 @@ router.put('/alerts/:id/ack', async (req, res) => {
   }
 })
 
-// GET /api/v1/medical/clients - List clients
+// GET /api/v1/medical/clients - List clients (only those who have booked with this provider)
 router.get('/clients', async (req, res) => {
   try {
+    const providerId = req.user?.id
     const pagination = getPagination(req.query)
 
+    // Find all slots created by this provider
+    const slots = await ConsultSlot.findAll({
+      where: { providerId },
+      attributes: ['id']
+    })
+    const slotIds = slots.map(slot => slot.id)
+
+    // If no slots exist, return empty result
+    if (slotIds.length === 0) {
+      return ok(res, {
+        items: [],
+        total: 0,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+        totalPages: 0
+      })
+    }
+
+    // Find all bookings for these slots to get unique user IDs
+    const bookings = await ConsultBooking.findAll({
+      where: { slotId: { [Op.in]: slotIds } },
+      attributes: ['userId'],
+      raw: true
+    })
+    // Get unique user IDs using Set
+    const userIds = [...new Set(bookings.map(booking => booking.userId).filter(id => id != null))]
+
+    // If no bookings exist, return empty result
+    if (userIds.length === 0) {
+      return ok(res, {
+        items: [],
+        total: 0,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+        totalPages: 0
+      })
+    }
+
+    // Filter UserMedicalProfile to only include users who have booked with this provider
     const result = await executePaginatedQuery(
       UserMedicalProfile,
       {
+        where: { userId: { [Op.in]: userIds } },
         include: [{ model: User, as: 'user', attributes: ['id', 'name', 'profilePicture'] }],
         order: [['updatedAt', 'DESC']]
       },
@@ -617,7 +732,7 @@ router.get('/clients/:userId', async (req, res) => {
   try {
     const { userId } = req.params
 
-    const [medicalProfile, healthDataRollups, recentAlerts, recentConsults] = await Promise.all([
+    const [medicalProfile, healthDataRollups, recentAlerts, recentConsults, intakeResponses] = await Promise.all([
       UserMedicalProfile.findOne({
         where: { userId },
         include: [{ model: User, as: 'user', attributes: ['id', 'name', 'profilePicture'] }]
@@ -640,6 +755,21 @@ router.get('/clients/:userId', async (req, res) => {
         ],
         limit: 10,
         order: [['createdAt', 'DESC']]
+      }),
+      IntakeResponse.findAll({
+        where: { userId },
+        include: [
+          { model: IntakeForm, as: 'form', attributes: ['id', 'version', 'schema', 'status'] },
+          { 
+            model: TriageRun, 
+            as: 'triageRuns', 
+            attributes: ['id', 'riskLevel', 'disposition', 'messages', 'ruleHits', 'inputs', 'createdAt'],
+            limit: 1,
+            order: [['createdAt', 'DESC']]
+          }
+        ],
+        limit: 20,
+        order: [['createdAt', 'DESC']]
       })
     ])
 
@@ -647,7 +777,8 @@ router.get('/clients/:userId', async (req, res) => {
       medicalProfile,
       healthDataRollups,
       recentAlerts,
-      recentConsults
+      recentConsults,
+      intakeResponses
     })
   } catch (error) {
     console.error('Error fetching client summary:', error)
@@ -854,6 +985,213 @@ router.post('/triage-rules/test', async (req, res) => {
     })
   } catch (error) {
     console.error('Error testing triage rule:', error)
+    err(res, error)
+  }
+})
+
+// ==================== INTAKE FORMS MANAGEMENT ====================
+
+// GET /api/v1/medical/intake-forms - List all intake forms
+router.get('/intake-forms', async (req, res) => {
+  try {
+    const { status, page, pageSize } = req.query
+    const pagination = getPagination({ page, pageSize })
+
+    const whereClause = {}
+    if (status) {
+      whereClause.status = status
+    }
+
+    const result = await executePaginatedQuery(
+      IntakeForm,
+      {
+        where: whereClause,
+        order: [['createdAt', 'DESC']],
+        include: [
+          {
+            model: IntakeResponse,
+            as: 'responses',
+            attributes: ['id'],
+            required: false
+          }
+        ]
+      },
+      pagination
+    )
+
+    // Add response count to each form
+    const formsWithCounts = result.items.map(form => {
+      const formData = form.toJSON()
+      formData.responseCount = formData.responses?.length || 0
+      delete formData.responses
+      return formData
+    })
+
+    ok(res, {
+      items: formsWithCounts,
+      pagination: result.pagination
+    })
+  } catch (error) {
+    console.error('Error fetching intake forms:', error)
+    err(res, error)
+  }
+})
+
+// GET /api/v1/medical/intake-forms/:id - Get intake form details
+router.get('/intake-forms/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const form = await IntakeForm.findByPk(id, {
+      include: [
+        {
+          model: IntakeResponse,
+          as: 'responses',
+          attributes: ['id', 'userId', 'createdAt'],
+          required: false,
+          limit: 10,
+          order: [['createdAt', 'DESC']]
+        }
+      ]
+    })
+
+    if (!form) {
+      return err(res, { code: 'NOT_FOUND', message: 'Intake form not found' }, 404)
+    }
+
+    ok(res, form)
+  } catch (error) {
+    console.error('Error fetching intake form:', error)
+    err(res, error)
+  }
+})
+
+// POST /api/v1/medical/intake-forms - Create new intake form
+router.post('/intake-forms', async (req, res) => {
+  try {
+    const { version, schema } = req.body
+
+    if (!version || !schema) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'version and schema are required' }, 400)
+    }
+
+    // Validate schema is a valid JSON object
+    if (typeof schema !== 'object' || Array.isArray(schema)) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'schema must be a valid JSON object' }, 400)
+    }
+
+    const form = await IntakeForm.create({
+      version,
+      schema,
+      status: 'draft'
+    })
+
+    ok(res, form)
+  } catch (error) {
+    console.error('Error creating intake form:', error)
+    err(res, error)
+  }
+})
+
+// PUT /api/v1/medical/intake-forms/:id - Update intake form
+router.put('/intake-forms/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { version, schema, status } = req.body
+
+    const form = await IntakeForm.findByPk(id)
+    if (!form) {
+      return err(res, { code: 'NOT_FOUND', message: 'Intake form not found' }, 404)
+    }
+
+    // Only allow editing draft forms, or allow status changes on published forms
+    if (form.status === 'published' && (version || schema)) {
+      return err(res, { code: 'INVALID_OPERATION', message: 'Cannot modify published form. Create a new version instead.' }, 400)
+    }
+
+    // Validate schema if provided
+    if (schema && (typeof schema !== 'object' || Array.isArray(schema))) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'schema must be a valid JSON object' }, 400)
+    }
+
+    const updateData = {}
+    if (version) updateData.version = version
+    if (schema) updateData.schema = schema
+    if (status && ['draft', 'published'].includes(status)) {
+      updateData.status = status
+      if (status === 'published' && form.status !== 'published') {
+        updateData.publishedAt = new Date()
+      }
+    }
+
+    await form.update(updateData)
+
+    ok(res, form)
+  } catch (error) {
+    console.error('Error updating intake form:', error)
+    err(res, error)
+  }
+})
+
+// POST /api/v1/medical/intake-forms/:id/publish - Publish intake form
+router.post('/intake-forms/:id/publish', async (req, res) => {
+  try {
+    const { id } = req.params
+    const medicalProId = req.user?.id
+
+    const form = await IntakeForm.findByPk(id)
+    if (!form) {
+      return err(res, { code: 'NOT_FOUND', message: 'Intake form not found' }, 404)
+    }
+
+    if (form.status === 'published') {
+      return err(res, { code: 'ALREADY_PUBLISHED', message: 'Form is already published' }, 400)
+    }
+
+    await form.update({
+      status: 'published',
+      publishedAt: new Date()
+    })
+
+    ok(res, form)
+  } catch (error) {
+    console.error('Error publishing intake form:', error)
+    err(res, error)
+  }
+})
+
+// DELETE /api/v1/medical/intake-forms/:id - Delete intake form (only if no responses)
+router.delete('/intake-forms/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const form = await IntakeForm.findByPk(id, {
+      include: [
+        {
+          model: IntakeResponse,
+          as: 'responses',
+          required: false
+        }
+      ]
+    })
+
+    if (!form) {
+      return err(res, { code: 'NOT_FOUND', message: 'Intake form not found' }, 404)
+    }
+
+    // Check if form has responses
+    const responseCount = form.responses?.length || 0
+    if (responseCount > 0) {
+      return err(res, {
+        code: 'CANNOT_DELETE',
+        message: `Cannot delete form with ${responseCount} response(s). Unpublish it instead.`
+      }, 400)
+    }
+
+    await form.destroy()
+
+    ok(res, { deleted: true, message: 'Intake form deleted successfully' })
+  } catch (error) {
+    console.error('Error deleting intake form:', error)
     err(res, error)
   }
 })
