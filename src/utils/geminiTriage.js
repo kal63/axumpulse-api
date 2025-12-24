@@ -1,6 +1,7 @@
 'use strict'
 
 const { GoogleGenerativeAI } = require('@google/generative-ai')
+const axios = require('axios')
 const { TriageRun, TriageRule } = require('../models')
 
 // Initialize Gemini (will use GEMINI_API_KEY from environment)
@@ -15,16 +16,8 @@ function initializeGemini() {
 
   try {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-    // Use gemini-1.5-flash for faster/cheaper responses, or gemini-1.5-pro for more nuanced analysis
-    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash'
-    model = genAI.getGenerativeModel({ 
-      model: modelName,
-      generationConfig: {
-        temperature: 0.3, // Lower temperature for more consistent medical assessments
-        topP: 0.8,
-        topK: 40
-      }
-    })
+    // Don't initialize a model here - we'll discover and use available models dynamically
+    // This prevents using a model that doesn't exist or isn't available
     return true
   } catch (error) {
     console.error('Failed to initialize Gemini:', error)
@@ -141,40 +134,172 @@ function parseGeminiResponse(text) {
 }
 
 /**
- * Call Gemini API with retry logic
+ * List available models from the Gemini API
+ * @returns {Promise<Array<string>>} - Array of available model names
+ */
+async function listAvailableModels() {
+  if (!genAI || !process.env.GEMINI_API_KEY) {
+    return []
+  }
+  
+  try {
+    // Use the REST API to list models
+    const apiKey = process.env.GEMINI_API_KEY
+    const response = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models`, {
+      params: { key: apiKey }
+    })
+    
+    if (response.data && response.data.models) {
+      const modelNames = response.data.models
+        .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+        .map(m => m.name.replace('models/', ''))
+      console.log('Available Gemini models:', modelNames)
+      return modelNames
+    }
+    return []
+  } catch (error) {
+    console.warn('Failed to list available models:', error.message)
+    return []
+  }
+}
+
+/**
+ * Try to initialize a model with a specific name
+ * @param {string} modelName - The model name to try
+ * @returns {Object|null} - The model instance or null if it fails
+ */
+function tryInitializeModel(modelName) {
+  try {
+    return genAI.getGenerativeModel({ 
+      model: modelName,
+      generationConfig: {
+        temperature: 0.3,
+        topP: 0.8,
+        topK: 40
+      }
+    })
+  } catch (error) {
+    console.warn(`Failed to initialize model ${modelName}:`, error.message)
+    return null
+  }
+}
+
+/**
+ * Call Gemini API with retry logic and model fallback
  * @param {string} prompt - The prompt to send
  * @param {number} maxRetries - Maximum number of retry attempts
  * @returns {Promise<string>} - The response text
  */
 async function callGeminiWithRetry(prompt, maxRetries = 3) {
-  if (!geminiInitialized || !model) {
+  console.log('Calling Gemini API with prompt:', prompt.substring(0, 200) + '...')
+  if (!geminiInitialized || !genAI) {
     throw new Error('Gemini API not initialized. Check GEMINI_API_KEY environment variable.')
   }
-
+  
+  // First, try to get available models from the API
+  let availableModels = []
+  try {
+    availableModels = await listAvailableModels()
+  } catch (error) {
+    console.warn('Could not fetch available models, using fallback list:', error.message)
+  }
+  
+  // Prioritize free-tier models (flash models are usually free-tier)
+  // Order: flash models first (free-tier), then pro models
+  const prioritizeModels = (models) => {
+    const flashModels = models.filter(m => m.includes('flash') && !m.includes('pro'))
+    const proModels = models.filter(m => m.includes('pro'))
+    const otherModels = models.filter(m => !m.includes('flash') && !m.includes('pro'))
+    return [...flashModels, ...proModels, ...otherModels]
+  }
+  
+  // List of fallback model names (prioritize flash models for free-tier)
+  const fallbackModelNames = [
+    'gemini-2.5-flash',              // Latest flash (usually free-tier)
+    'gemini-flash-latest',           // Latest flash alias
+    'gemini-2.0-flash',              // Stable flash
+    'gemini-1.5-flash',              // Older flash
+    'gemini-pro',                    // Basic pro
+    'gemini-pro-latest',             // Latest pro alias
+    'gemini-1.5-pro',                // Standard pro
+    'gemini-1.0-pro'                 // Older pro
+  ]
+  
+  // Build model list: prioritize available models, then fallback
+  let modelNames = []
+  if (availableModels.length > 0) {
+    // Prioritize flash models from available list
+    const prioritizedAvailable = prioritizeModels(availableModels)
+    modelNames = [...new Set([
+      ...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []),
+      ...prioritizedAvailable,
+      ...fallbackModelNames
+    ])]
+  } else {
+    modelNames = [...new Set([
+      ...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []),
+      ...fallbackModelNames
+    ])]
+  }
+  
+  let currentModel = null
   let lastError = null
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await model.generateContent(prompt)
-      const response = await result.response
-      return response.text()
-    } catch (error) {
-      lastError = error
-      console.warn(`Gemini API call attempt ${attempt} failed:`, error.message)
-      
-      // Don't retry on certain errors
-      if (error.message?.includes('API key') || error.message?.includes('quota')) {
-        throw error
-      }
-      
-      // Exponential backoff
-      if (attempt < maxRetries) {
-        const delay = 1000 * Math.pow(2, attempt - 1) // 1s, 2s, 4s
-        await new Promise(resolve => setTimeout(resolve, delay))
+  let successfulModelName = null
+  
+  // Try each model name if the current one fails
+  for (let modelAttempt = 0; modelAttempt < modelNames.length; modelAttempt++) {
+    const modelName = modelNames[modelAttempt]
+    
+    // Always initialize the model (we don't pre-initialize anymore)
+    console.log(`Trying model: ${modelName}`)
+    currentModel = tryInitializeModel(modelName)
+    if (!currentModel) {
+      continue // Try next model
+    }
+    
+    // Retry logic for the current model
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await currentModel.generateContent(prompt)
+        const response = await result.response
+        // Update the global model reference for future use
+        model = currentModel
+        successfulModelName = modelName
+        console.log(`Successfully using model: ${modelName}`)
+        // Store model name in response for tracking
+        const responseText = response.text()
+        // Attach model name to the response (we'll handle this differently)
+        return { text: responseText, modelName: modelName }
+      } catch (error) {
+        lastError = error
+        console.warn(`Gemini API call attempt ${attempt} with model ${modelName} failed:`, error.message)
+        
+        // Don't retry on API key or permission errors - these won't work with any model
+        if (error.message?.includes('API key') || error.message?.includes('permission')) {
+          throw error
+        }
+        
+        // If it's a quota error (429), skip this model and try the next one
+        if (error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('Too Many Requests')) {
+          console.warn(`Quota exceeded for model ${modelName}, trying next model...`)
+          break // Break out of retry loop, try next model
+        }
+        
+        // If it's a 404 (model not found), try next model immediately
+        if (error.message?.includes('404') || error.message?.includes('not found') || error.message?.includes('is not found')) {
+          break // Break out of retry loop, try next model
+        }
+        
+        // For other errors, retry with exponential backoff
+        if (attempt < maxRetries) {
+          const delay = 1000 * Math.pow(2, attempt - 1) // 1s, 2s, 4s
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
       }
     }
   }
   
-  throw lastError || new Error('Gemini API call failed after retries')
+  throw lastError || new Error('Gemini API call failed after trying all available models')
 }
 
 /**
@@ -256,8 +381,10 @@ async function evaluateTriageWithGemini(intakeResponse, medicalProfile, options 
     const prompt = buildTriagePrompt(intakeAnswers, profileData, triageRules)
 
     // Call Gemini API with retry
-    const responseText = await callGeminiWithRetry(prompt, maxRetries)
-
+    const response = await callGeminiWithRetry(prompt, maxRetries)
+    const responseText = typeof response === 'string' ? response : response.text
+    const usedModelName = typeof response === 'string' ? null : response.modelName
+    console.log('Gemini response:', responseText)
     // Parse response
     const triageResult = parseGeminiResponse(responseText)
 
@@ -276,7 +403,7 @@ async function evaluateTriageWithGemini(intakeResponse, medicalProfile, options 
         intakeAnswers,
         medicalProfile: profileData,
         geminiReasoning: triageResult.reasoning, // Store AI reasoning
-        geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+        geminiModel: usedModelName || process.env.GEMINI_MODEL || 'auto-selected'
       },
       ruleHits,
       riskLevel: triageResult.riskLevel,
