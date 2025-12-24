@@ -20,8 +20,8 @@ const {
   User
 } = require('../../../models')
 const { Op } = require('sequelize')
-//const { evaluateTriageRules } = require('../../../utils/triageEngine')
-const { evaluateTriageWithGemini } = require('../../../utils/geminiTriage')
+// const { evaluateTriageRules } = require('../../../utils/triageEngine')
+const { evaluateTriageWithGemini } = require('../../../utils/GeminiTriage')
 
 // All routes require authentication
 router.use(requireAuth)

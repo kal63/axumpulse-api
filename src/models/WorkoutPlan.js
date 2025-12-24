@@ -23,6 +23,13 @@ module.exports = (sequelize, DataTypes) => {
                 foreignKey: 'workoutPlanId',
                 as: 'userProgress'
             });
+
+            // A workout plan can have many insights
+            WorkoutPlan.hasMany(models.WorkoutPlanInsight, {
+                foreignKey: 'workoutPlanId',
+                as: 'insights',
+                onDelete: 'CASCADE'
+            });
         }
 
         // Override toJSON to parse JSON fields that might be returned as strings

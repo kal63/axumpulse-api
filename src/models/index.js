@@ -41,6 +41,7 @@ const ConsultNote = require('./ConsultNote')(sequelize, DataTypes)
 const HealthDataPoint = require('./HealthDataPoint')(sequelize, DataTypes)
 const HealthDataRollup = require('./HealthDataRollup')(sequelize, DataTypes)
 const HealthAlert = require('./HealthAlert')(sequelize, DataTypes)
+const WorkoutPlanInsight = require('./WorkoutPlanInsight')(sequelize, DataTypes)
 
 const models = {
     Language,
@@ -79,7 +80,8 @@ const models = {
     ConsultNote,
     HealthDataPoint,
     HealthDataRollup,
-    HealthAlert
+    HealthAlert,
+    WorkoutPlanInsight
 }
 
 // Associations
