@@ -9,7 +9,7 @@ let sequelize
 if (mysqlUri) {
     sequelize = new Sequelize(mysqlUri, {
         logging: false,
-        timezone: process.env.DB_TIMEZONE || '+03:00',
+        timezone: process.env.DB_TIMEZONE || '+00:00', // Use UTC to avoid timezone conversion issues
     })
 } else {
     // Fallback to individual env vars (useful for local development)
@@ -25,7 +25,7 @@ if (mysqlUri) {
         port: dbPort,
         dialect: dbDialect,
         logging: false,
-        timezone: process.env.DB_TIMEZONE || '+03:00',
+        timezone: process.env.DB_TIMEZONE || '+00:00', // Use UTC to avoid timezone conversion issues
     })
 }
 

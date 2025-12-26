@@ -10,6 +10,7 @@ const {
   TriageRun,
   MedicalQuestion,
   MedicalAnswer,
+  ConsultSchedule,
   ConsultSlot,
   ConsultBooking,
   ConsultNote,
@@ -246,6 +247,239 @@ router.post('/questions/:id/answers', async (req, res) => {
   }
 })
 
+// ==================== CONSULT SCHEDULES (Weekly Recurring) ====================
+
+// GET /api/v1/medical/consults/schedules - List all weekly schedules for the logged-in provider
+router.get('/consults/schedules', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+
+    const schedules = await ConsultSchedule.findAll({
+      where: { providerId },
+      order: [['dayOfWeek', 'ASC'], ['startTime', 'ASC']]
+    })
+
+    ok(res, schedules)
+  } catch (error) {
+    console.error('Error fetching schedules:', error)
+    err(res, error)
+  }
+})
+
+// POST /api/v1/medical/consults/schedules - Create weekly schedule entry
+router.post('/consults/schedules', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    let { dayOfWeek, startTime, endTime, duration, type, timezone, status } = req.body
+
+    if (dayOfWeek === undefined || !startTime || !endTime) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'dayOfWeek, startTime, and endTime are required' }, 400)
+    }
+
+    // Convert dayOfWeek to number if it's a string
+    dayOfWeek = parseInt(dayOfWeek)
+
+    // Validate dayOfWeek
+    if (isNaN(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'dayOfWeek must be between 0 (Sunday) and 6 (Saturday)' }, 400)
+    }
+
+    // Normalize time format: ensure HH:MM:SS format (convert HH:MM to HH:MM:SS)
+    if (typeof startTime === 'string' && startTime.length === 5) {
+      startTime = startTime + ':00'
+    }
+    if (typeof endTime === 'string' && endTime.length === 5) {
+      endTime = endTime + ':00'
+    }
+
+    // Validate type enum
+    const validTypes = ['quick', 'full', 'follow_up']
+    if (type && !validTypes.includes(type)) {
+      return err(res, { 
+        code: 'VALIDATION_ERROR', 
+        message: `Invalid type. Must be one of: ${validTypes.join(', ')}` 
+      }, 400)
+    }
+
+    // Validate duration
+    if (duration !== undefined) {
+      duration = parseInt(duration)
+      if (isNaN(duration) || duration < 1) {
+        return err(res, { code: 'VALIDATION_ERROR', message: 'duration must be at least 1 minute' }, 400)
+      }
+    }
+
+    const schedule = await ConsultSchedule.create({
+      providerId,
+      dayOfWeek,
+      startTime,
+      endTime,
+      duration: duration || 30,
+      type: type || 'quick',
+      timezone: timezone || null,
+      status: status || 'active'
+    })
+
+    ok(res, schedule)
+  } catch (error) {
+    console.error('Error creating schedule:', error)
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      errors: error.errors,
+      stack: error.stack
+    })
+    console.error('Request body:', req.body)
+    
+    let errorMessage = 'An unexpected error occurred.'
+    let statusCode = 400
+    
+    if (error.name === 'SequelizeValidationError') {
+      errorMessage = error.errors?.map(e => e.message).join(', ') || 'Validation error'
+    } else if (error.name === 'SequelizeUniqueConstraintError') {
+      errorMessage = 'A schedule with this time range already exists for this day'
+      statusCode = 409
+    } else if (error.message) {
+      errorMessage = error.message
+    }
+    
+    err(res, { 
+      code: error.name || 'VALIDATION_ERROR', 
+      message: errorMessage,
+      details: error.errors || {}
+    }, statusCode)
+  }
+})
+
+// PUT /api/v1/medical/consults/schedules/:id - Update a schedule entry
+router.put('/consults/schedules/:id', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    const { id } = req.params
+    const { dayOfWeek, startTime, endTime, duration, type, timezone, status } = req.body
+
+    const schedule = await ConsultSchedule.findOne({
+      where: { id, providerId }
+    })
+
+    if (!schedule) {
+      return err(res, { code: 'NOT_FOUND', message: 'Schedule not found' }, 404)
+    }
+
+    // Validate type if provided
+    if (type) {
+      const validTypes = ['quick', 'full', 'follow_up']
+      if (!validTypes.includes(type)) {
+        return err(res, { 
+          code: 'VALIDATION_ERROR', 
+          message: `Invalid type. Must be one of: ${validTypes.join(', ')}` 
+        }, 400)
+      }
+    }
+
+    // Normalize time format if provided: ensure HH:MM:SS format
+    let normalizedStartTime
+    let normalizedEndTime
+    if (startTime !== undefined && startTime !== null) {
+      if (typeof startTime === 'string' && startTime.length === 5) {
+        normalizedStartTime = startTime + ':00'
+      } else {
+        normalizedStartTime = startTime
+      }
+    }
+    if (endTime !== undefined && endTime !== null) {
+      if (typeof endTime === 'string' && endTime.length === 5) {
+        normalizedEndTime = endTime + ':00'
+      } else {
+        normalizedEndTime = endTime
+      }
+    }
+
+    // Validate duration if provided
+    let normalizedDuration
+    if (duration !== undefined && duration !== null) {
+      normalizedDuration = parseInt(duration)
+      if (isNaN(normalizedDuration) || normalizedDuration < 1) {
+        return err(res, { code: 'VALIDATION_ERROR', message: 'duration must be at least 1 minute' }, 400)
+      }
+    }
+
+    // Build update object - only include fields that are provided
+    const updateData = {}
+    if (dayOfWeek !== undefined) {
+      updateData.dayOfWeek = parseInt(dayOfWeek)
+      if (isNaN(updateData.dayOfWeek) || updateData.dayOfWeek < 0 || updateData.dayOfWeek > 6) {
+        return err(res, { code: 'VALIDATION_ERROR', message: 'dayOfWeek must be between 0 (Sunday) and 6 (Saturday)' }, 400)
+      }
+    }
+    if (normalizedStartTime !== undefined) {
+      updateData.startTime = normalizedStartTime
+    }
+    if (normalizedEndTime !== undefined) {
+      updateData.endTime = normalizedEndTime
+    }
+    if (normalizedDuration !== undefined) {
+      updateData.duration = normalizedDuration
+    }
+    if (type !== undefined) {
+      updateData.type = type
+    }
+    if (timezone !== undefined) {
+      updateData.timezone = timezone
+    }
+    if (status !== undefined) {
+      updateData.status = status
+    }
+
+    await schedule.update(updateData)
+
+    ok(res, schedule)
+  } catch (error) {
+    console.error('Error updating schedule:', error)
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      errors: error.errors
+    })
+    
+    let errorMessage = 'An unexpected error occurred.'
+    if (error.name === 'SequelizeValidationError') {
+      errorMessage = error.errors?.map(e => e.message).join(', ') || 'Validation error'
+    } else if (error.message) {
+      errorMessage = error.message
+    }
+    
+    err(res, { 
+      code: 'VALIDATION_ERROR', 
+      message: errorMessage,
+      details: error.errors || {}
+    }, 400)
+  }
+})
+
+// DELETE /api/v1/medical/consults/schedules/:id - Delete a schedule entry
+router.delete('/consults/schedules/:id', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    const { id } = req.params
+
+    const schedule = await ConsultSchedule.findOne({
+      where: { id, providerId }
+    })
+
+    if (!schedule) {
+      return err(res, { code: 'NOT_FOUND', message: 'Schedule not found' }, 404)
+    }
+
+    await schedule.destroy()
+
+    ok(res, { deleted: true })
+  } catch (error) {
+    console.error('Error deleting schedule:', error)
+    err(res, error)
+  }
+})
+
 // GET /api/v1/medical/consults/slots - List my published slots
 router.get('/consults/slots', async (req, res) => {
   try {
@@ -418,7 +652,7 @@ router.get('/consults/bookings', async (req, res) => {
           },
           { model: User, as: 'user', attributes: ['id', 'name', 'profilePicture'] }
         ],
-        order: [['createdAt', 'DESC']]
+        order: [[{ model: ConsultSlot, as: 'slot' }, 'startAt', 'ASC']]
       },
       pagination
     )

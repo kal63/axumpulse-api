@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { ConsultBooking, User } = require('./models');
 
-// Store active rooms: roomId -> { bookingId, participants: Set<socketId> }
+// Store active rooms: roomId -> { bookingId, participants: Set<socketId>, lastOffer: { offer, from, timestamp } }
 const activeRooms = new Map();
 
 // Store socket to user mapping: socketId -> { userId, bookingId, roomId }
@@ -84,12 +84,20 @@ function setupSocketHandlers(io) {
         if (!activeRooms.has(roomId)) {
           activeRooms.set(roomId, {
             bookingId,
-            participants: new Set()
+            participants: new Set(),
+            lastOffer: null
           });
         }
-        activeRooms.get(roomId).participants.add(socket.id);
+        const room = activeRooms.get(roomId);
+        room.participants.add(socket.id);
 
-        // Notify others in the room
+        // Get room info before notifying
+        const otherParticipants = Array.from(room.participants)
+          .filter(sid => sid !== socket.id)
+          .map(sid => socketUsers.get(sid))
+          .filter(Boolean);
+
+        // Notify others in the room that a new user joined
         socket.to(roomId).emit('user-joined', {
           userId,
           socketId: socket.id,
@@ -97,20 +105,26 @@ function setupSocketHandlers(io) {
         });
 
         // Send room info to the joining user
-        const room = activeRooms.get(roomId);
-        const otherParticipants = Array.from(room.participants)
-          .filter(sid => sid !== socket.id)
-          .map(sid => socketUsers.get(sid))
-          .filter(Boolean);
-
         socket.emit('room-joined', {
           roomId,
           bookingId,
           participants: otherParticipants,
           timestamp: new Date().toISOString()
         });
+        
+        // If there's a pending offer in the room, send it to the new participant
+        if (room.lastOffer && otherParticipants.length > 0) {
+          console.log(`📨 Sending pending offer to newly joined user ${userId}`);
+          socket.emit('offer', {
+            offer: room.lastOffer.offer,
+            from: room.lastOffer.from,
+            socketId: room.lastOffer.socketId,
+            timestamp: room.lastOffer.timestamp
+          });
+        }
 
-        console.log(`User ${userId} joined room ${roomId} for booking ${bookingId}`);
+        console.log(`✅ User ${userId} joined room ${roomId} for booking ${bookingId}`);
+        console.log(`   Room now has ${room.participants.size} participants`);
       } catch (error) {
         console.error('Error in join-room:', error);
         socket.emit('error', { message: 'Failed to join room', error: error.message });
@@ -125,6 +139,22 @@ function setupSocketHandlers(io) {
         return;
       }
 
+      console.log(`📤 Forwarding offer from user ${socket.userId} to room ${roomId}`);
+      
+      // Get room participants to log
+      const room = activeRooms.get(roomId);
+      if (room) {
+        console.log(`   Room has ${room.participants.size} participants`);
+        
+        // Store the offer for late joiners
+        room.lastOffer = {
+          offer,
+          from: socket.userId,
+          socketId: socket.id,
+          timestamp: new Date().toISOString()
+        };
+      }
+
       // Forward offer to other participants in the room
       socket.to(roomId).emit('offer', {
         offer,
@@ -132,6 +162,8 @@ function setupSocketHandlers(io) {
         socketId: socket.id,
         timestamp: new Date().toISOString()
       });
+      
+      console.log(`✅ Offer forwarded to room ${roomId} and stored for late joiners`);
     });
 
     // Handle WebRTC answer

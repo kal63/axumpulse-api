@@ -11,13 +11,15 @@ const {
   IntakeResponse,
   TriageRun,
   MedicalQuestion,
+  ConsultSchedule,
   ConsultSlot,
   ConsultBooking,
   ConsultNote,
   HealthDataPoint,
   HealthDataRollup,
   HealthAlert,
-  User
+  User,
+  MedicalProfessional
 } = require('../../../models')
 const { Op } = require('sequelize')
 // const { evaluateTriageRules } = require('../../../utils/triageEngine')
@@ -323,43 +325,131 @@ router.get('/questions/:id', async (req, res) => {
   }
 })
 
-// GET /api/v1/user/medical/consults/slots - List available consult slots
-router.get('/consults/slots', async (req, res) => {
+// GET /api/v1/user/medical/consults/doctors - List available medical professionals
+router.get('/consults/doctors', async (req, res) => {
   try {
-    const { providerId, type, startDate, endDate } = req.query
-
-    const where = {
-      status: 'open'
-    }
-
-    if (providerId) where.providerId = providerId
-    if (type) where.type = type
-    if (startDate || endDate) {
-      where.startAt = {}
-      if (startDate) where.startAt[Op.gte] = new Date(startDate)
-      if (endDate) where.startAt[Op.lte] = new Date(endDate)
-    }
-
-    const slots = await ConsultSlot.findAll({
-      where,
+    const doctors = await User.findAll({
+      where: { isMedical: true },
       include: [
         {
-          model: User,
-          as: 'provider',
-          attributes: ['id', 'name', 'profilePicture'],
-          include: [
-            {
-              model: require('../../../models').MedicalProfessional,
-              as: 'medicalProfessional',
-              attributes: ['professionalType', 'specialties', 'verified']
-            }
-          ]
+          model: MedicalProfessional,
+          as: 'medicalProfessional',
+          where: { verified: true },
+          required: true,
+          attributes: ['professionalType', 'specialties', 'verified']
         }
       ],
-      order: [['startAt', 'ASC']]
+      attributes: ['id', 'name', 'profilePicture', 'email'],
+      order: [['name', 'ASC']]
     })
 
-    ok(res, slots)
+    ok(res, doctors)
+  } catch (error) {
+    console.error('Error fetching doctors:', error)
+    err(res, error)
+  }
+})
+
+// GET /api/v1/user/medical/consults/slots - List available consult slots (generated from schedules)
+router.get('/consults/slots', async (req, res) => {
+  try {
+    const { providerId, weekStartDate } = req.query
+
+    if (!providerId) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'providerId is required' }, 400)
+    }
+
+    // Calculate week start (Monday) - parse as local date, not UTC
+    let weekStart
+    if (weekStartDate) {
+      // Parse YYYY-MM-DD string as local date (not UTC)
+      const [year, month, day] = weekStartDate.split('-').map(Number)
+      weekStart = new Date(year, month - 1, day, 0, 0, 0, 0) // month is 0-indexed
+    } else {
+      // Get current week's Monday
+      const now = new Date()
+      const day = now.getDay() // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+      const diff = day === 0 ? -6 : 1 - day // Monday is day 1, so offset is 1-day
+      weekStart = new Date(now)
+      weekStart.setDate(now.getDate() + diff)
+      weekStart.setHours(0, 0, 0, 0)
+    }
+
+    // Get all active schedules for this provider
+    const schedules = await ConsultSchedule.findAll({
+      where: {
+        providerId: parseInt(providerId),
+        status: 'active'
+      }
+    })
+
+    // Generate slots dynamically from schedules (don't store them)
+    const weekStartStr = typeof weekStartDate === 'string' ? weekStartDate : 
+      `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`
+    
+    const generatedSlots = []
+    for (const schedule of schedules) {
+      const slots = await schedule.generateSlotsForWeekDynamic(weekStartStr)
+      generatedSlots.push(...slots)
+    }
+
+    // Get booked slots for this provider in this week to filter them out
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekEnd.getDate() + 7)
+
+    const bookings = await ConsultBooking.findAll({
+      where: {
+        status: 'booked'
+      },
+      include: [
+        {
+          model: ConsultSlot,
+          as: 'slot',
+          required: true,
+          where: {
+            providerId: parseInt(providerId),
+            startAt: {
+              [Op.gte]: weekStart,
+              [Op.lt]: weekEnd
+            }
+          }
+        }
+      ]
+    })
+
+    // Create a set of booked slot times (using ISO string for comparison)
+    const bookedSlotTimes = new Set()
+    bookings.forEach(booking => {
+      if (booking.slot) {
+        const slotTime = new Date(booking.slot.startAt).toISOString()
+        bookedSlotTimes.add(slotTime)
+      }
+    })
+
+    // Filter out booked slots and format with provider info
+    const provider = await User.findByPk(parseInt(providerId), {
+      attributes: ['id', 'name', 'profilePicture'],
+      include: [
+        {
+          model: MedicalProfessional,
+          as: 'medicalProfessional',
+          attributes: ['professionalType', 'specialties', 'verified']
+        }
+      ]
+    })
+
+    const openSlots = generatedSlots
+      .filter(slot => {
+        const slotTime = new Date(slot.startAt).toISOString()
+        return !bookedSlotTimes.has(slotTime)
+      })
+      .map(slot => ({
+        ...slot,
+        provider: provider
+      }))
+      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+
+    ok(res, openSlots)
   } catch (error) {
     console.error('Error fetching consult slots:', error)
     err(res, error)
@@ -374,30 +464,170 @@ router.post('/consults/bookings', async (req, res) => {
       return err(res, { code: 'UNAUTHORIZED', message: 'User not authenticated' }, 401)
     }
 
-    const { slotId } = req.body
+    const { startAt, providerId } = req.body
 
-    if (!slotId) {
-      return err(res, { code: 'VALIDATION_ERROR', message: 'slotId is required' }, 400)
+    if (!startAt || !providerId) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'startAt and providerId are required' }, 400)
     }
 
-    // Check if slot exists and is available
-    const slot = await ConsultSlot.findOne({
-      where: { id: slotId, status: 'open' },
-      include: [{ model: ConsultBooking, as: 'booking' }]
+    const providerIdNum = parseInt(providerId)
+    if (isNaN(providerIdNum)) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid providerId' }, 400)
+    }
+
+    // Parse the startAt date - it comes as an ISO string from the frontend
+    const startDateTime = new Date(startAt)
+    if (isNaN(startDateTime.getTime())) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid startAt date format' }, 400)
+    }
+    
+    // Extract date and time components from ISO string (UTC format)
+    // Since slots are generated in UTC, we need to compare UTC times
+    const isoMatch = startAt.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/)
+    if (!isoMatch) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid ISO date format' }, 400)
+    }
+    
+    const [, year, month, day, utcHour, minute] = isoMatch.map(Number)
+
+    // Check if slot is already booked by querying ConsultSlot directly
+    const existingSlot = await ConsultSlot.findOne({
+      where: {
+        providerId: providerIdNum,
+        startAt: startDateTime
+      },
+      include: [
+        {
+          model: ConsultBooking,
+          as: 'booking',
+          required: false
+        }
+      ]
     })
 
-    if (!slot) {
-      return err(res, { code: 'NOT_FOUND', message: 'Slot not found or not available' }, 404)
+    if (existingSlot && existingSlot.booking && existingSlot.booking.status === 'booked') {
+      return err(res, { code: 'ALREADY_BOOKED', message: 'Slot is already booked' }, 400)
     }
 
-    if (slot.booking) {
-      return err(res, { code: 'ALREADY_BOOKED', message: 'Slot is already booked' }, 400)
+    // Find or create the ConsultSlot record
+    // Calculate endAt based on schedule duration (default 30 minutes)
+    const schedules = await ConsultSchedule.findAll({
+      where: {
+        providerId: providerIdNum,
+        status: 'active'
+      }
+    })
+    
+    // Helper to parse timezone offset (default UTC+3)
+    const parseTimezoneOffset = (timezone) => {
+      if (!timezone) return 3 // Default UTC+3
+      const tzMatch = timezone.match(/^([+-])(\d{2}):?(\d{2})?$/)
+      if (tzMatch) {
+        const sign = tzMatch[1] === '+' ? 1 : -1
+        const hours = parseInt(tzMatch[2], 10)
+        return sign * hours
+      }
+      return 3 // Default UTC+3
+    }
+    
+    let matchingSchedule = null
+    let slotDuration = 30 // default
+    
+    // Match by converting UTC slot time back to local time and comparing with schedule
+    // Slots are stored with UTC times that include timezone offset (added)
+    // Convert back to local time for comparison
+    for (const schedule of schedules) {
+      const timezoneOffset = parseTimezoneOffset(schedule.timezone)
+      
+      // Convert UTC time back to local time (add offset)
+      // When storing: Local - Offset = UTC
+      // When converting back: UTC + Offset = Local
+      let localHour = utcHour + timezoneOffset
+      let localDay = day
+      let localYear = year
+      let localMonth = month
+      
+      // Handle day rollover when converting from UTC to local (adding offset)
+      if (localHour >= 24) {
+        localHour -= 24
+        localDay += 1
+      } else if (localHour < 0) {
+        localHour += 24
+        localDay -= 1
+      }
+      
+      // Get day of week for the local date (using UTC date constructor to avoid timezone issues)
+      const localDate = new Date(Date.UTC(localYear, localMonth - 1, localDay))
+      const localDayOfWeek = localDate.getUTCDay()
+      
+      // Compare with schedule
+      if (schedule.dayOfWeek === localDayOfWeek) {
+        const startTimeStr = typeof schedule.startTime === 'string' ? schedule.startTime : String(schedule.startTime)
+        const endTimeStr = typeof schedule.endTime === 'string' ? schedule.endTime : String(schedule.endTime)
+        const [startHours, startMinutes] = startTimeStr.split(':').map(Number)
+        const [endHours, endMinutes] = endTimeStr.split(':').map(Number)
+        const scheduleStartMinutes = startHours * 60 + startMinutes
+        const scheduleEndMinutes = endHours * 60 + endMinutes
+        const slotLocalMinutes = localHour * 60 + minute
+        
+        // Allow a small tolerance (1 minute) for time matching
+        if (slotLocalMinutes >= scheduleStartMinutes - 1 && slotLocalMinutes < scheduleEndMinutes) {
+          matchingSchedule = schedule
+          slotDuration = schedule.duration
+          break
+        }
+      }
+    }
+
+    if (!matchingSchedule) {
+      // Log details for debugging
+      console.log('No matching schedule found. Details:', {
+        isoString: startAt,
+        utcHour,
+        minute,
+        schedulesCount: schedules.length,
+        schedules: schedules.map(s => ({
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          timezone: s.timezone
+        }))
+      })
+      return err(res, { 
+        code: 'NOT_FOUND', 
+        message: `No matching schedule found for this time slot` 
+      }, 404)
+    }
+
+    const endDateTime = new Date(startDateTime)
+    endDateTime.setUTCMinutes(endDateTime.getUTCMinutes() + slotDuration)
+
+    // Use existingSlot if found, otherwise create new ConsultSlot
+    let slot = existingSlot
+    if (!slot) {
+      slot = await ConsultSlot.create({
+        providerId: providerIdNum,
+        startAt: startDateTime,
+        endAt: endDateTime,
+        type: matchingSchedule.type,
+        timezone: matchingSchedule.timezone,
+        status: 'open'
+      })
+    } else {
+      // Reload slot to ensure we have the latest booking info
+      slot = await ConsultSlot.findByPk(slot.id, {
+        include: [{ model: ConsultBooking, as: 'booking' }]
+      })
+      
+      if (slot && slot.booking && slot.booking.status === 'booked') {
+        return err(res, { code: 'ALREADY_BOOKED', message: 'Slot is already booked' }, 400)
+      }
     }
 
     // Create booking
     const booking = await ConsultBooking.create({
       userId,
-      slotId,
+      slotId: slot.id,
       status: 'booked'
     })
 

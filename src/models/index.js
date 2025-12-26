@@ -35,6 +35,7 @@ const TriageRun = require('./TriageRun')(sequelize, DataTypes)
 const MedicalQuestion = require('./MedicalQuestion')(sequelize, DataTypes)
 const MedicalAnswer = require('./MedicalAnswer')(sequelize, DataTypes)
 const MedicalAttachment = require('./MedicalAttachment')(sequelize, DataTypes)
+const ConsultSchedule = require('./ConsultSchedule')(sequelize, DataTypes)
 const ConsultSlot = require('./ConsultSlot')(sequelize, DataTypes)
 const ConsultBooking = require('./ConsultBooking')(sequelize, DataTypes)
 const ConsultNote = require('./ConsultNote')(sequelize, DataTypes)
@@ -75,6 +76,7 @@ const models = {
     MedicalQuestion,
     MedicalAnswer,
     MedicalAttachment,
+    ConsultSchedule,
     ConsultSlot,
     ConsultBooking,
     ConsultNote,
