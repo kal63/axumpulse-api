@@ -2,10 +2,38 @@ require('dotenv').config();
 const http = require('http');
 const { Server } = require('socket.io');
 const app = require('./server');
-const { sequelize } = require('./models');
+const { sequelize, ConsultBooking } = require('./models');
+const { Op } = require('sequelize');
 const { setupSocketHandlers } = require('./socket-handlers');
 
 const PORT = process.env.PORT || 3000;
+
+async function cleanupStaleCalls() {
+    try {
+        console.log('Cleaning up stale calls from previous server session...');
+        const result = await ConsultBooking.update(
+            {
+                callStatus: 'ended',
+                callEndedAt: new Date()
+            },
+            {
+                where: {
+                    callStatus: {
+                        [Op.in]: ['ringing', 'in_progress']
+                    }
+                }
+            }
+        );
+        if (result[0] > 0) {
+            console.log(`✅ Reset ${result[0]} stale call(s) to 'ended' status`);
+        } else {
+            console.log('✅ No stale calls found');
+        }
+    } catch (error) {
+        console.error('⚠️ Error cleaning up stale calls:', error);
+        // Don't fail server startup if cleanup fails
+    }
+}
 
 async function startServer() {
     try {
@@ -18,6 +46,9 @@ async function startServer() {
         console.log('Syncing database models...');
         //await sequelize.sync({ alter: true }); // alter: true will update existing tables
         console.log('✅ Database models synced successfully.');
+
+        // Clean up any stale calls from previous server session
+        await cleanupStaleCalls();
 
         // Create HTTP server from Express app
         const server = http.createServer(app);

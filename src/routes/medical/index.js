@@ -915,6 +915,37 @@ router.get('/consults/bookings/:id/call-status', async (req, res) => {
   }
 })
 
+// POST /api/v1/medical/consults/bookings/:id/reset-call-status - Manually reset call status (for debugging)
+router.post('/consults/bookings/:id/reset-call-status', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    const { id } = req.params
+
+    const booking = await ConsultBooking.findOne({
+      where: { id },
+      include: [{ model: ConsultSlot, as: 'slot', where: { providerId }, required: true }]
+    })
+
+    if (!booking) {
+      return err(res, { code: 'NOT_FOUND', message: 'Booking not found' }, 404)
+    }
+
+    await booking.update({
+      callStatus: 'ended',
+      callEndedAt: new Date()
+    })
+
+    ok(res, {
+      message: 'Call status reset to ended',
+      bookingId: booking.id,
+      callStatus: booking.callStatus
+    })
+  } catch (error) {
+    console.error('Error resetting call status:', error)
+    err(res, error)
+  }
+})
+
 // GET /api/v1/medical/alerts - List health alerts
 router.get('/alerts', async (req, res) => {
   try {
