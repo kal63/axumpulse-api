@@ -681,5 +681,76 @@ router.get('/alerts', async (req, res) => {
   }
 })
 
+// POST /api/v1/user/medical/consults/bookings/:id/join-call - Join a call room
+router.post('/consults/bookings/:id/join-call', async (req, res) => {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+
+    if (!userId) {
+      return err(res, { code: 'UNAUTHORIZED', message: 'User not authenticated' }, 401)
+    }
+
+    const booking = await ConsultBooking.findOne({
+      where: { id, userId },
+      include: [{ model: ConsultSlot, as: 'slot' }]
+    })
+
+    if (!booking) {
+      return err(res, { code: 'NOT_FOUND', message: 'Booking not found' }, 404)
+    }
+
+    if (!booking.callRoomId) {
+      return err(res, { code: 'NO_CALL_STARTED', message: 'Call has not been started yet' }, 400)
+    }
+
+    // Update call status to in_progress when user joins
+    if (booking.callStatus === 'ringing') {
+      await booking.update({ callStatus: 'in_progress' })
+    }
+
+    ok(res, {
+      bookingId: booking.id,
+      roomId: booking.callRoomId,
+      callStatus: booking.callStatus,
+      message: 'Ready to join call'
+    })
+  } catch (error) {
+    console.error('Error joining call:', error)
+    err(res, error)
+  }
+})
+
+// GET /api/v1/user/medical/consults/bookings/:id/call-status - Get call status
+router.get('/consults/bookings/:id/call-status', async (req, res) => {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+
+    if (!userId) {
+      return err(res, { code: 'UNAUTHORIZED', message: 'User not authenticated' }, 401)
+    }
+
+    const booking = await ConsultBooking.findOne({
+      where: { id, userId }
+    })
+
+    if (!booking) {
+      return err(res, { code: 'NOT_FOUND', message: 'Booking not found' }, 404)
+    }
+
+    ok(res, {
+      bookingId: booking.id,
+      callStatus: booking.callStatus,
+      callRoomId: booking.callRoomId,
+      callStartedAt: booking.callStartedAt,
+      callEndedAt: booking.callEndedAt
+    })
+  } catch (error) {
+    console.error('Error fetching call status:', error)
+    err(res, error)
+  }
+})
+
 module.exports = router
 

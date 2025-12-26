@@ -20,7 +20,15 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 'booked'
       },
       canceledAt: { type: DataTypes.DATE, allowNull: true },
-      cancelReason: { type: DataTypes.TEXT, allowNull: true }
+      cancelReason: { type: DataTypes.TEXT, allowNull: true },
+      callStatus: {
+        type: DataTypes.ENUM('not_started', 'ringing', 'in_progress', 'ended'),
+        allowNull: false,
+        defaultValue: 'not_started'
+      },
+      callRoomId: { type: DataTypes.STRING(255), allowNull: true, unique: true },
+      callStartedAt: { type: DataTypes.DATE, allowNull: true },
+      callEndedAt: { type: DataTypes.DATE, allowNull: true }
     },
     {
       sequelize,
@@ -30,7 +38,9 @@ module.exports = (sequelize, DataTypes) => {
       indexes: [
         { fields: ['userId'] },
         { unique: true, fields: ['slotId'] },
-        { fields: ['status'] }
+        { fields: ['status'] },
+        { fields: ['callStatus'] },
+        { fields: ['callRoomId'] }
       ]
     }
   );

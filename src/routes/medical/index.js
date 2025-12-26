@@ -608,6 +608,79 @@ router.put('/consults/bookings/:id/share-summary', async (req, res) => {
   }
 })
 
+// POST /api/v1/medical/consults/bookings/:id/start-call - Start a call for a booking
+router.post('/consults/bookings/:id/start-call', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    const { id } = req.params
+
+    const booking = await ConsultBooking.findOne({
+      where: { id },
+      include: [{ model: ConsultSlot, as: 'slot', where: { providerId }, required: true }]
+    })
+
+    if (!booking) {
+      return err(res, { code: 'NOT_FOUND', message: 'Booking not found' }, 404)
+    }
+
+    if (booking.status !== 'booked') {
+      return err(res, { code: 'INVALID_STATUS', message: 'Can only start call for booked consultations' }, 400)
+    }
+
+    // Generate or reuse room ID
+    let roomId = booking.callRoomId
+    if (!roomId) {
+      const { v4: uuidv4 } = require('uuid')
+      roomId = uuidv4()
+      await booking.update({ callRoomId: roomId })
+    }
+
+    // Update call status
+    await booking.update({
+      callStatus: 'ringing',
+      callStartedAt: new Date()
+    })
+
+    ok(res, {
+      bookingId: booking.id,
+      roomId,
+      callStatus: 'ringing',
+      message: 'Call room created. Waiting for user to join.'
+    })
+  } catch (error) {
+    console.error('Error starting call:', error)
+    err(res, error)
+  }
+})
+
+// GET /api/v1/medical/consults/bookings/:id/call-status - Get call status
+router.get('/consults/bookings/:id/call-status', async (req, res) => {
+  try {
+    const providerId = req.user?.id
+    const { id } = req.params
+
+    const booking = await ConsultBooking.findOne({
+      where: { id },
+      include: [{ model: ConsultSlot, as: 'slot', where: { providerId }, required: true }]
+    })
+
+    if (!booking) {
+      return err(res, { code: 'NOT_FOUND', message: 'Booking not found' }, 404)
+    }
+
+    ok(res, {
+      bookingId: booking.id,
+      callStatus: booking.callStatus,
+      callRoomId: booking.callRoomId,
+      callStartedAt: booking.callStartedAt,
+      callEndedAt: booking.callEndedAt
+    })
+  } catch (error) {
+    console.error('Error fetching call status:', error)
+    err(res, error)
+  }
+})
+
 // GET /api/v1/medical/alerts - List health alerts
 router.get('/alerts', async (req, res) => {
   try {
