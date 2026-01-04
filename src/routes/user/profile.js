@@ -187,7 +187,7 @@ router.get('/stats', async (req, res) => {
         const xpProgress = xp - currentLevelXP
         const xpNeeded = nextLevelXP - currentLevelXP
 
-        // Get stats
+        // Get stats - use values from user_profile table for workoutsCompleted and challengesCompleted
         const stats = {
             // Content stats
             contentWatched: await UserContentProgress.count({
@@ -204,17 +204,13 @@ router.get('/stats', async (req, res) => {
             workoutPlansStarted: await UserWorkoutPlanProgress.count({
                 where: { userId }
             }),
-            workoutPlansCompleted: await UserWorkoutPlanProgress.count({
-                where: { userId, status: 'completed' }
-            }),
+            workoutPlansCompleted: user.profile?.workoutsCompleted || 0,
 
             // Challenge stats
             challengesJoined: await UserChallengeProgress.count({
                 where: { userId }
             }),
-            challengesCompleted: await UserChallengeProgress.count({
-                where: { userId, status: 'completed' }
-            }),
+            challengesCompleted: user.profile?.challengesCompleted || 0,
 
             // Achievement stats
             achievementsUnlocked: await UserAchievement.count({
