@@ -661,7 +661,7 @@ router.get('/consults/bookings', async (req, res) => {
     const result = await executePaginatedQuery(
       ConsultBooking,
       {
-        where: { userId },
+        where: { userId, status: 'booked' },
         include: [
           {
             model: ConsultSlot,
