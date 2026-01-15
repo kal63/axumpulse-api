@@ -1,5 +1,21 @@
-function ok(res, data, status = 200) {
-    res.status(status).json({ success: true, data });
+function ok(res, data, statusOrMessage = 200) {
+    let status = 200;
+    let message = null;
+    
+    // If third parameter is a number, it's a status code
+    // If it's a string, it's a message (use default status 200)
+    if (typeof statusOrMessage === 'number') {
+        status = statusOrMessage;
+    } else if (typeof statusOrMessage === 'string') {
+        message = statusOrMessage;
+    }
+    
+    const response = { success: true, data };
+    if (message) {
+        response.message = message;
+    }
+    
+    res.status(status).json(response);
 }
 
 function err(res, error, status = 500) {
