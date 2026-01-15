@@ -143,7 +143,7 @@ router.get('/:id', async (req, res) => {
             }, 404);
         }
 
-        ok(res, { data: application });
+        ok(res, application);
 
     } catch (error) {
         console.error('Error fetching application details:', error);
