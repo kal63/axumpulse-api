@@ -45,6 +45,7 @@ router.use('/languages', require('./languages'));
 router.use('/trainers', require('./trainers'));
 router.use('/users', require('./users'));
 router.use('/challenges', require('./challenges'));
+router.use('/games', require('./games'));
 router.use('/rewards', require('./rewards'));
 router.use('/moderation', require('./moderation'));
 router.use('/medical-applications', require('./medical-applications'));
