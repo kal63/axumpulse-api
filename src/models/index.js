@@ -22,6 +22,9 @@ const UserExerciseProgress = require('./UserExerciseProgress')(sequelize, DataTy
 const UserChallengeProgress = require('./UserChallengeProgress')(sequelize, DataTypes)
 const Achievement = require('./Achievement')(sequelize, DataTypes)
 const UserAchievement = require('./UserAchievement')(sequelize, DataTypes)
+const Game = require('./Game')(sequelize, DataTypes)
+const UserGameProgress = require('./UserGameProgress')(sequelize, DataTypes)
+const DailyChallengeProgress = require('./DailyChallengeProgress')(sequelize, DataTypes)
 
 // Medical layer (new)
 const MedicalProfessionalApplication = require('./MedicalProfessionalApplication')(sequelize, DataTypes)
@@ -63,6 +66,9 @@ const models = {
     UserChallengeProgress,
     Achievement,
     UserAchievement,
+    Game,
+    UserGameProgress,
+    DailyChallengeProgress,
 
     // Medical layer exports
     MedicalProfessionalApplication,

@@ -27,6 +27,16 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false,
             defaultValue: 0
         },
+        dailyChallengeStreak: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: 0
+        },
+        lastDailyChallengeDate: {
+            type: DataTypes.DATEONLY,
+            allowNull: true,
+            defaultValue: null
+        },
 
         // Subscription
         subscriptionTier: {

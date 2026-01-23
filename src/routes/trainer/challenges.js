@@ -83,7 +83,11 @@ router.post('/', async (req, res) => {
             language,
             isPublic,
             startDate,
-            endDate
+            endDate,
+            isDailyChallenge,
+            fitnessLevel,
+            recurrencePattern,
+            autoAssign
         } = req.body
 
         // Validation
@@ -97,6 +101,10 @@ router.post('/', async (req, res) => {
 
         if (difficulty && !['beginner', 'intermediate', 'advanced'].includes(difficulty)) {
             return err(res, { code: 'VALIDATION_ERROR', message: 'difficulty must be one of: beginner, intermediate, advanced' }, 400)
+        }
+
+        if (fitnessLevel && !['beginner', 'intermediate', 'advanced'].includes(fitnessLevel)) {
+            return err(res, { code: 'VALIDATION_ERROR', message: 'fitnessLevel must be one of: beginner, intermediate, advanced' }, 400)
         }
 
         const challenge = await Challenge.create({
@@ -116,7 +124,11 @@ router.post('/', async (req, res) => {
             endTime: endDate, // Map endDate to endTime
             status: 'draft',
             isTrainerCreated: true,
-            kind: 'trainer_challenge' // Use kind field to distinguish from admin challenges
+            kind: 'trainer_challenge', // Use kind field to distinguish from admin challenges
+            isDailyChallenge: isDailyChallenge || false,
+            fitnessLevel: fitnessLevel || null,
+            recurrencePattern: recurrencePattern || null,
+            autoAssign: autoAssign || false
         })
 
         ok(res, { challenge })
@@ -156,7 +168,8 @@ router.put('/:id', async (req, res) => {
         const updatable = [
             'title', 'description', 'type', 'difficulty', 'duration',
             'xpReward', 'requirements', 'contentIds', 'language',
-            'isPublic', 'startDate', 'endDate'
+            'isPublic', 'startDate', 'endDate',
+            'isDailyChallenge', 'fitnessLevel', 'recurrencePattern', 'autoAssign'
         ]
 
         for (const key of updatable) {

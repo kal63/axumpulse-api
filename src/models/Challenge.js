@@ -88,6 +88,27 @@ module.exports = (sequelize, DataTypes) => {
                 model: 'trainers',
                 key: 'userId'
             }
+        },
+        // Daily challenge fields
+        isDailyChallenge: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false
+        },
+        fitnessLevel: {
+            type: DataTypes.ENUM('beginner', 'intermediate', 'advanced'),
+            allowNull: true,
+            defaultValue: null
+        },
+        recurrencePattern: {
+            type: DataTypes.JSON,
+            allowNull: true,
+            defaultValue: null
+        },
+        autoAssign: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false
         }
     }, {
         tableName: 'Challenges',
@@ -110,6 +131,15 @@ module.exports = (sequelize, DataTypes) => {
             },
             {
                 fields: ['isTrainerCreated']
+            },
+            {
+                fields: ['isDailyChallenge']
+            },
+            {
+                fields: ['fitnessLevel']
+            },
+            {
+                fields: ['isDailyChallenge', 'fitnessLevel']
             }
         ]
     })
@@ -131,7 +161,7 @@ module.exports = (sequelize, DataTypes) => {
         const values = Object.assign({}, this.get());
 
         // Parse JSON fields that might be strings in production
-        const jsonFields = ['ruleJson', 'contentIds'];
+        const jsonFields = ['ruleJson', 'contentIds', 'recurrencePattern'];
 
         jsonFields.forEach(field => {
             if (values[field] && typeof values[field] === 'string') {
