@@ -89,7 +89,7 @@ function detectPaymentMethod(verificationData) {
  */
 router.post('/subscription/initialize', requireAuth, async (req, res) => {
     try {
-        const { subscription_plan_id, trainer_id, duration, phone_number } = req.body
+        const { subscription_plan_id, trainer_id, duration, phone_number, email } = req.body
         const user = req.user
 
         // Validation
@@ -151,11 +151,40 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
         const backendUrl = process.env.BACKEND_URL || 
             `http://localhost:${process.env.PORT || 3000}`
 
+        // Validate and format email for Chapa
+        // Chapa requires a valid email format
+        // Priority: provided email > user.email > generated email
+        let customerEmail = email || user.email
+        
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        
+        if (!customerEmail || !emailRegex.test(customerEmail)) {
+            // Create a valid email from phone number (remove + and spaces, keep only digits)
+            const cleanPhone = (phone_number || user.phone || '').replace(/[^\d]/g, '').replace(/^251/, '')
+            if (cleanPhone && cleanPhone.length >= 9) {
+                customerEmail = `user${cleanPhone}@axumpulse.com`
+            } else {
+                // Final fallback
+                customerEmail = `user${user.id}@axumpulse.com`
+            }
+        }
+
+        // Final validation - ensure email is valid
+        if (!emailRegex.test(customerEmail)) {
+            return err(res, {
+                code: 'VALIDATION_ERROR',
+                message: 'Invalid email format. Please provide a valid email address.',
+            }, 400)
+        }
+
+        console.log('Using email for Chapa payment:', customerEmail)
+
         // Prepare payment data
         const paymentData = {
             amount: String(amount),
             currency: 'ETB',
-            email: user.email || `${user.phone}@axumpulse.com`,
+            email: customerEmail,
             tx_ref: txRef,
             first_name: firstName,
             last_name: lastName,
@@ -219,7 +248,7 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
             amount: amount,
             currency: 'ETB',
             status: 'pending',
-            customerEmail: user.email || `${user.phone}@axumpulse.com`,
+            customerEmail: customerEmail,
             customerName: user.name || 'User',
             customerPhone: phone_number,
             callbackData: { duration } // Store duration for activation
@@ -266,7 +295,9 @@ router.get('/chapa/callback/:reference', async (req, res) => {
         }
 
         // Update transaction with callback and verification data
-        transaction.callbackData = req.query
+        // Merge existing callbackData with new query params
+        const existingCallbackData = transaction.callbackData || {}
+        transaction.callbackData = { ...existingCallbackData, ...req.query }
         transaction.verificationData = verificationData
         transaction.verifiedAt = new Date()
 
@@ -279,14 +310,56 @@ router.get('/chapa/callback/:reference', async (req, res) => {
 
             // Activate or extend subscription
             // Get duration from callbackData (stored during initialization)
-            const duration = transaction.callbackData?.duration || 'monthly'
-            await activateSubscription(transaction, duration)
+            // callbackData might be a JSON string or object
+            let duration = 'monthly'
+            try {
+                let callbackDataObj = transaction.callbackData
+                
+                // If callbackData is a string, parse it
+                if (typeof callbackDataObj === 'string') {
+                    try {
+                        callbackDataObj = JSON.parse(callbackDataObj)
+                    } catch (e) {
+                        console.warn('Failed to parse callbackData as JSON:', e)
+                    }
+                }
+                
+                // Extract duration from the object
+                if (callbackDataObj && callbackDataObj.duration) {
+                    duration = callbackDataObj.duration
+                } else {
+                    // Try to get from the original stored data
+                    // The duration was stored in callbackData during initialization
+                    console.log('CallbackData structure:', JSON.stringify(callbackDataObj))
+                }
+            } catch (e) {
+                console.warn('Error extracting duration from callbackData:', e)
+            }
+            
+            console.log('Activating subscription with duration:', duration)
 
-            console.log('Payment successful and subscription activated', {
-                tx_ref: reference,
-                user_id: transaction.userId,
-                plan_id: transaction.subscriptionPlanId,
-            })
+            try {
+                await activateSubscription(transaction, duration)
+                console.log('Payment successful and subscription activated', {
+                    tx_ref: reference,
+                    user_id: transaction.userId,
+                    plan_id: transaction.subscriptionPlanId,
+                    trainer_id: transaction.trainerId,
+                    duration: duration
+                })
+            } catch (activationError) {
+                console.error('Failed to activate subscription:', {
+                    error: activationError.message,
+                    tx_ref: reference,
+                    user_id: transaction.userId,
+                    plan_id: transaction.subscriptionPlanId,
+                    trainer_id: transaction.trainerId,
+                    duration: duration,
+                    stack: activationError.stack
+                })
+                // Don't fail the callback, but log the error
+                // The transaction is still marked as success, but subscription activation failed
+            }
         } else {
             transaction.status = 'failed'
 
@@ -318,6 +391,51 @@ router.get('/chapa/callback/:reference', async (req, res) => {
     }
 })
 
+
+/**
+ * Manual payment verification endpoint (for testing/debugging)
+ * GET /api/v1/payments/verify/:txRef
+ */
+router.get('/verify/:txRef', requireAuth, async (req, res) => {
+    try {
+        const { txRef } = req.params
+        const userId = req.user.id
+
+        const transaction = await PaymentTransaction.findOne({
+            where: {
+                txRef: txRef,
+                userId: userId
+            }
+        })
+
+        if (!transaction) {
+            return err(res, { code: 'NOT_FOUND', message: 'Transaction not found' }, 404)
+        }
+
+        // Check subscription status
+        const { getUserSubscription } = require('../../services/subscriptionService')
+        const subscription = await getUserSubscription(userId)
+
+        return ok(res, {
+            transaction: {
+                id: transaction.id,
+                txRef: transaction.txRef,
+                status: transaction.status,
+                amount: transaction.amount,
+                createdAt: transaction.createdAt,
+                completedAt: transaction.completedAt
+            },
+            subscription: subscription || null
+        })
+    } catch (error) {
+        console.error('Payment verification error:', error)
+        return err(res, {
+            code: 'INTERNAL_ERROR',
+            message: 'Verification failed',
+            error: error.message,
+        }, 500)
+    }
+})
 
 module.exports = router
 
