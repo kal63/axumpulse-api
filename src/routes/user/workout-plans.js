@@ -166,7 +166,7 @@ router.get('/:id', async (req, res) => {
         }
 
         // Filter related plans by subscribed trainer if user has active subscription
-        const relatedPlansWhere: any = {
+        const relatedPlansWhere = {
             id: { [Op.ne]: id },
             status: 'approved',
             isPublic: true,
