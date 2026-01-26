@@ -9,6 +9,7 @@ const { Op } = require('sequelize')
 const { requireAuth } = require('../../middleware/auth')
 const { requireMedical } = require('../../middleware/requireMedical')
 const { generateWorkoutPlanInsightWithAI } = require('../../utils/WorkoutPlanInsightGenerator')
+const { getSubscribedTrainerId } = require('../../services/subscriptionService')
 
 // GET /user/workout-plans - Get all approved, public workout plans
 router.get('/', async (req, res) => {
@@ -52,6 +53,19 @@ router.get('/', async (req, res) => {
                 { title: { [Op.like]: `%${search}%` } },
                 { description: { [Op.like]: `%${search}%` } }
             ]
+        }
+
+        // Filter by subscribed trainer if user has active subscription
+        if (userId) {
+            try {
+                const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                if (subscribedTrainerId) {
+                    whereClause.trainerId = subscribedTrainerId
+                }
+            } catch (error) {
+                console.error('Error checking subscription:', error)
+                // Continue without filtering on error
+            }
         }
 
         const result = await executePaginatedQuery(WorkoutPlan, {
@@ -151,17 +165,31 @@ router.get('/:id', async (req, res) => {
             return err(res, { code: 'NOT_FOUND', message: 'Workout plan not found' }, 404)
         }
 
+        // Filter related plans by subscribed trainer if user has active subscription
+        const relatedPlansWhere: any = {
+            id: { [Op.ne]: id },
+            status: 'approved',
+            isPublic: true,
+            [Op.or]: [
+                { category: workoutPlan.category },
+                { difficulty: workoutPlan.difficulty }
+            ]
+        }
+
+        if (userId) {
+            try {
+                const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                if (subscribedTrainerId) {
+                    relatedPlansWhere.trainerId = subscribedTrainerId
+                }
+            } catch (error) {
+                console.error('Error checking subscription:', error)
+            }
+        }
+
         // Get related workout plans
         const relatedPlans = await WorkoutPlan.findAll({
-            where: {
-                id: { [Op.ne]: id },
-                status: 'approved',
-                isPublic: true,
-                [Op.or]: [
-                    { category: workoutPlan.category },
-                    { difficulty: workoutPlan.difficulty }
-                ]
-            },
+            where: relatedPlansWhere,
             limit: 6,
             attributes: ['id', 'title', 'description', 'difficulty', 'category', 'estimatedDuration', 'totalExercises'],
             include: [

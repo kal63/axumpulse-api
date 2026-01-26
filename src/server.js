@@ -13,6 +13,8 @@ const publicRoutes = require('./routes/public');
 const userRoutes = require('./routes/user');
 const medicalRoutes = require('./routes/medical');
 const medicalApplyRoutes = require('./routes/medical/apply');
+const subscriptionRoutes = require('./routes/subscription');
+const paymentRoutes = require('./routes/payment/paymentRoutes');
 
 const app = express();
 
@@ -45,6 +47,8 @@ app.use('/api/v1/medical/apply', medicalApplyRoutes);
 app.use('/api/v1/medical', medicalRoutes);
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/public', publicRoutes);
+app.use('/api/v1/subscription', subscriptionRoutes);
+app.use('/api/v1/payments', paymentRoutes);
 
 module.exports = app;
 

@@ -46,6 +46,9 @@ const HealthDataPoint = require('./HealthDataPoint')(sequelize, DataTypes)
 const HealthDataRollup = require('./HealthDataRollup')(sequelize, DataTypes)
 const HealthAlert = require('./HealthAlert')(sequelize, DataTypes)
 const WorkoutPlanInsight = require('./WorkoutPlanInsight')(sequelize, DataTypes)
+const SubscriptionPlan = require('./SubscriptionPlan')(sequelize, DataTypes)
+const UserSubscription = require('./UserSubscription')(sequelize, DataTypes)
+const PaymentTransaction = require('./PaymentTransaction')(sequelize, DataTypes)
 
 const models = {
     Language,
@@ -89,7 +92,10 @@ const models = {
     HealthDataPoint,
     HealthDataRollup,
     HealthAlert,
-    WorkoutPlanInsight
+    WorkoutPlanInsight,
+    SubscriptionPlan,
+    UserSubscription,
+    PaymentTransaction
 }
 
 // Associations

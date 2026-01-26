@@ -6,6 +6,7 @@ const { ok, err } = require('../../utils/errors')
 const { getPagination, executePaginatedQuery } = require('../../utils/pagination')
 const { Content, Trainer, User, UserContentProgress } = require('../../models')
 const { Op } = require('sequelize')
+const { getSubscribedTrainerId } = require('../../services/subscriptionService')
 
 // GET /user/content - Get all approved, public content for users
 router.get('/', async (req, res) => {
@@ -57,6 +58,19 @@ router.get('/', async (req, res) => {
                 { title: { [Op.like]: `%${search}%` } },
                 { description: { [Op.like]: `%${search}%` } }
             ]
+        }
+
+        // Filter by subscribed trainer if user has active subscription
+        if (userId) {
+            try {
+                const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                if (subscribedTrainerId) {
+                    whereClause.trainerId = subscribedTrainerId
+                }
+            } catch (error) {
+                console.error('Error checking subscription:', error)
+                // Continue without filtering on error
+            }
         }
 
         const result = await executePaginatedQuery(Content, {
