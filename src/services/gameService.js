@@ -1,27 +1,93 @@
 'use strict';
 
-const { Game } = require('../models');
+const { Game, Challenge } = require('../models');
+const { Op } = require('sequelize');
 const { 
     generateQuizWithGemini, 
     generateMemoryGameWithGemini 
 } = require('../utils/geminiGameGenerator');
 
 /**
- * Spin & Win - Random exercise selection
+ * Spin & Win - Random challenge selection from Challenges table
  * @param {Object} game - Game model instance
- * @returns {Object} - Selected exercise
+ * @returns {Promise<Object>} - Selected challenge with all details
  */
-function spinAndWin(game) {
-    const config = game.configJson || {};
-    const exercises = config.exercises || [];
-    
-    if (exercises.length === 0) {
-        throw new Error('No exercises configured for Spin & Win game');
+async function spinAndWin(game) {
+    try {
+        // Build where clause for challenges
+        const whereClause = {
+            active: true,
+            status: 'approved',
+            isPublic: true,
+            // Only get challenges that are suitable for games (not daily challenges)
+            isDailyChallenge: false
+        };
+
+        // Optionally filter by difficulty if game has one
+        if (game.difficulty) {
+            whereClause.difficulty = game.difficulty;
+        }
+
+        // Optionally filter by type if game config specifies
+        const config = game.configJson || {};
+        if (config.challengeType) {
+            whereClause.type = config.challengeType;
+        }
+
+        // Fetch available challenges
+        const challenges = await Challenge.findAll({
+            where: whereClause,
+            order: [['createdAt', 'DESC']],
+            limit: 100 // Limit to prevent loading too many
+        });
+
+        if (challenges.length === 0) {
+            // Fallback to config exercises if no challenges found
+            const exercises = config.exercises || [];
+            if (exercises.length === 0) {
+                throw new Error('No challenges or exercises available for Spin & Win game');
+            }
+            
+            // Randomly select an exercise from config
+            const randomIndex = Math.floor(Math.random() * exercises.length);
+            return exercises[randomIndex];
+        }
+
+        // Randomly select a challenge
+        const randomIndex = Math.floor(Math.random() * challenges.length);
+        const selectedChallenge = challenges[randomIndex];
+
+        // Format challenge to match expected exercise structure
+        // This ensures compatibility with existing frontend code
+        return {
+            // Use title as the main identifier (frontend can use title or name)
+            title: selectedChallenge.title,
+            name: selectedChallenge.title, // For backward compatibility
+            description: selectedChallenge.description || null,
+            requirements: selectedChallenge.requirements || null,
+            difficulty: selectedChallenge.difficulty || 'beginner',
+            type: selectedChallenge.type || 'fitness',
+            xpReward: selectedChallenge.xpReward || game.xpReward || 50,
+            // Additional fields that might be useful
+            category: selectedChallenge.type,
+            muscleGroup: null, // Challenges don't have this, but keep for compatibility
+            muscleGroups: null
+        };
+    } catch (error) {
+        console.error('Error fetching challenges for Spin & Win:', error);
+        
+        // Fallback to config exercises
+        const config = game.configJson || {};
+        const exercises = config.exercises || [];
+        
+        if (exercises.length === 0) {
+            throw new Error('No challenges or exercises available for Spin & Win game');
+        }
+        
+        // Randomly select an exercise from config
+        const randomIndex = Math.floor(Math.random() * exercises.length);
+        return exercises[randomIndex];
     }
-    
-    // Randomly select an exercise
-    const randomIndex = Math.floor(Math.random() * exercises.length);
-    return exercises[randomIndex];
 }
 
 /**

@@ -361,7 +361,7 @@ router.post('/:id/play', async (req, res) => {
 
         switch (game.gameType) {
             case 'spin_win':
-                const exercise = spinAndWin(game);
+                const exercise = await spinAndWin(game);
                 gameContent = { exercise };
                 break;
 
