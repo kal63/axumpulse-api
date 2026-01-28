@@ -42,15 +42,7 @@ async function spinAndWin(game) {
         });
 
         if (challenges.length === 0) {
-            // Fallback to config exercises if no challenges found
-            const exercises = config.exercises || [];
-            if (exercises.length === 0) {
-                throw new Error('No challenges or exercises available for Spin & Win game');
-            }
-            
-            // Randomly select an exercise from config
-            const randomIndex = Math.floor(Math.random() * exercises.length);
-            return exercises[randomIndex];
+            throw new Error('No challenges available for Spin & Win game');
         }
 
         // Randomly select a challenge
@@ -75,18 +67,7 @@ async function spinAndWin(game) {
         };
     } catch (error) {
         console.error('Error fetching challenges for Spin & Win:', error);
-        
-        // Fallback to config exercises
-        const config = game.configJson || {};
-        const exercises = config.exercises || [];
-        
-        if (exercises.length === 0) {
-            throw new Error('No challenges or exercises available for Spin & Win game');
-        }
-        
-        // Randomly select an exercise from config
-        const randomIndex = Math.floor(Math.random() * exercises.length);
-        return exercises[randomIndex];
+        throw error; // Re-throw the error instead of falling back to config
     }
 }
 
