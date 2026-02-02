@@ -8,19 +8,19 @@ const {
 } = require('../utils/geminiGameGenerator');
 
 /**
- * Spin & Win - Random challenge selection from Challenges table
+ * Spin & Win - Random challenge selection from challenges with isGameChallenge flag
  * @param {Object} game - Game model instance
  * @returns {Promise<Object>} - Selected challenge with all details
  */
 async function spinAndWin(game) {
     try {
-        // Build where clause for challenges
+        // Filter challenges by isGameChallenge flag
         const whereClause = {
             active: true,
             status: 'approved',
             isPublic: true,
-            // Only get challenges that are suitable for games (not daily challenges)
-            isDailyChallenge: false
+            isDailyChallenge: false,
+            isGameChallenge: true // Only challenges marked for games
         };
 
         // Optionally filter by difficulty if game has one
@@ -38,11 +38,11 @@ async function spinAndWin(game) {
         const challenges = await Challenge.findAll({
             where: whereClause,
             order: [['createdAt', 'DESC']],
-            limit: 100 // Limit to prevent loading too many
+            limit: 100
         });
 
         if (challenges.length === 0) {
-            throw new Error('No challenges available for Spin & Win game');
+            throw new Error('No challenges available for Spin & Win game. Mark challenges as "Game Challenge" to make them available.');
         }
 
         // Randomly select a challenge
@@ -50,24 +50,23 @@ async function spinAndWin(game) {
         const selectedChallenge = challenges[randomIndex];
 
         // Format challenge to match expected exercise structure
-        // This ensures compatibility with existing frontend code
+        // Use XP from challenge, not from game
         return {
-            // Use title as the main identifier (frontend can use title or name)
             title: selectedChallenge.title,
             name: selectedChallenge.title, // For backward compatibility
             description: selectedChallenge.description || null,
             requirements: selectedChallenge.requirements || null,
             difficulty: selectedChallenge.difficulty || 'beginner',
             type: selectedChallenge.type || 'fitness',
-            xpReward: selectedChallenge.xpReward || game.xpReward || 50,
-            // Additional fields that might be useful
+            xpReward: selectedChallenge.xpReward || 50, // Use challenge XP
             category: selectedChallenge.type,
-            muscleGroup: null, // Challenges don't have this, but keep for compatibility
-            muscleGroups: null
+            muscleGroup: null,
+            muscleGroups: null,
+            challengeId: selectedChallenge.id // Include challenge ID for reference
         };
     } catch (error) {
         console.error('Error fetching challenges for Spin & Win:', error);
-        throw error; // Re-throw the error instead of falling back to config
+        throw error;
     }
 }
 
@@ -259,9 +258,11 @@ function calculateGameScore(gameType, gameData, game) {
             break;
             
         case 'spin_win':
-            // Spin & Win always gives full XP (it's just random selection)
+            // Spin & Win always gives full XP
+            // XP comes from the challenge, not the game
             score = 1;
-            xpEarned = game.xpReward || 50;
+            // If gameData contains challenge XP, use it; otherwise fallback to game XP
+            xpEarned = gameData.challengeXp || gameData.xpReward || game.xpReward || 50;
             break;
             
         default:

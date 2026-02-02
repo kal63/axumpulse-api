@@ -362,7 +362,10 @@ router.post('/:id/play', async (req, res) => {
         switch (game.gameType) {
             case 'spin_win':
                 const exercise = await spinAndWin(game);
-                gameContent = { exercise };
+                gameContent = { 
+                    exercise,
+                    challengeXp: exercise.xpReward // Pass challenge XP for use in submit
+                };
                 break;
 
             case 'quiz_battle':
@@ -438,9 +441,17 @@ router.post('/:id/submit', async (req, res) => {
         }
 
         // Calculate score and XP
-        const scoreResult = calculateGameScore(game.gameType, gameData, game);
+        // For spin_win, if challengeXp is provided in gameData, use it instead of game.xpReward
+        let xpToAward = game.xpReward || 50
+        if (game.gameType === 'spin_win' && gameData.challengeXp) {
+            xpToAward = gameData.challengeXp
+        }
+        
+        // Create a modified game object with challenge XP for score calculation
+        const gameForScore = { ...game.toJSON(), xpReward: xpToAward }
+        const scoreResult = calculateGameScore(game.gameType, gameData, gameForScore);
 
-        // Award XP
+        // Award XP (use challenge XP if available for spin_win)
         const xpResult = await awardGameXP(
             userId,
             scoreResult.xpEarned,

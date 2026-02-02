@@ -109,6 +109,12 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.BOOLEAN,
             allowNull: false,
             defaultValue: false
+        },
+        isGameChallenge: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Whether this challenge is available for use in games (spin & win)'
         }
     }, {
         tableName: 'Challenges',
@@ -140,6 +146,9 @@ module.exports = (sequelize, DataTypes) => {
             },
             {
                 fields: ['isDailyChallenge', 'fitnessLevel']
+            },
+            {
+                fields: ['isGameChallenge']
             }
         ]
     })
