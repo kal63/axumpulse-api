@@ -209,8 +209,28 @@ async function hasActiveSubscription(userId, trainerId = null) {
  * @returns {Promise<number|null>} Trainer ID or null
  */
 async function getSubscribedTrainerId(userId) {
-    const subscription = await getUserSubscription(userId)
-    return subscription ? subscription.trainerId : null
+    try {
+        const subscription = await getUserSubscription(userId)
+        if (subscription) {
+            console.log(`[getSubscribedTrainerId] Found active subscription for user ${userId}:`, {
+                subscriptionId: subscription.id,
+                trainerId: subscription.trainerId,
+                status: subscription.status,
+                expiresAt: subscription.expiresAt,
+                isExpired: new Date() > new Date(subscription.expiresAt)
+            })
+            return subscription.trainerId
+        } else {
+            console.log(`[getSubscribedTrainerId] No active subscription found for user ${userId}`)
+            return null
+        }
+    } catch (error) {
+        console.error(`[getSubscribedTrainerId] Error getting subscription for user ${userId}:`, {
+            error: error.message,
+            stack: error.stack
+        })
+        return null
+    }
 }
 
 module.exports = {

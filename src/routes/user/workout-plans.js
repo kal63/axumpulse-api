@@ -6,13 +6,14 @@ const { ok, err } = require('../../utils/errors')
 const { getPagination, executePaginatedQuery } = require('../../utils/pagination')
 const { WorkoutPlan, WorkoutExercise, Trainer, User, UserWorkoutPlanProgress, WorkoutPlanInsight, ConsultBooking, ConsultSlot } = require('../../models')
 const { Op } = require('sequelize')
-const { requireAuth } = require('../../middleware/auth')
+const { requireAuth, optionalAuth } = require('../../middleware/auth')
 const { requireMedical } = require('../../middleware/requireMedical')
 const { generateWorkoutPlanInsightWithAI } = require('../../utils/WorkoutPlanInsightGenerator')
 const { getSubscribedTrainerId } = require('../../services/subscriptionService')
 
 // GET /user/workout-plans - Get all approved, public workout plans
-router.get('/', async (req, res) => {
+// Use optionalAuth to get userId if authenticated, but allow unauthenticated access
+router.get('/', optionalAuth, async (req, res) => {
     try {
         const userId = req.user?.id
         const { category, difficulty, duration, search } = req.query
@@ -55,22 +56,32 @@ router.get('/', async (req, res) => {
             ]
         }
 
-        // Filter by subscribed trainer if user has active subscription
+        // CRITICAL: Filter by subscribed trainer if user has active subscription
+        // This ensures users only see workouts from their subscribed trainer
         if (userId) {
             try {
                 const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                console.log(`[Workout Plans] User ${userId} subscription check:`, {
+                    hasSubscription: !!subscribedTrainerId,
+                    trainerId: subscribedTrainerId
+                })
+                
                 if (subscribedTrainerId) {
                     whereClause.trainerId = subscribedTrainerId
-                    console.log(`[Workout Plans] Filtering workouts for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                    console.log(`[Workout Plans] ✅ Filtering workouts for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
                 } else {
-                    console.log(`[Workout Plans] User ${userId} has no active subscription - showing all public workouts`)
+                    console.log(`[Workout Plans] ⚠️ User ${userId} has no active subscription - showing all public workouts`)
                 }
             } catch (error) {
-                console.error('[Workout Plans] Error checking subscription:', error)
-                // Continue without filtering on error
+                console.error('[Workout Plans] ❌ Error checking subscription:', {
+                    error: error.message,
+                    stack: error.stack,
+                    userId: userId
+                })
+                // Continue without filtering on error - show all public workouts
             }
         } else {
-            console.log('[Workout Plans] No userId provided - showing all public workouts')
+            console.log('[Workout Plans] No userId provided (user not authenticated) - showing all public workouts')
         }
 
         const result = await executePaginatedQuery(WorkoutPlan, {
@@ -128,7 +139,7 @@ router.get('/categories', async (req, res) => {
 })
 
 // GET /user/workout-plans/:id - Get single workout plan with exercises
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
     try {
         const userId = req.user?.id
         const { id } = req.params
@@ -181,14 +192,16 @@ router.get('/:id', async (req, res) => {
             ]
         }
 
+        // Filter related plans by subscribed trainer if user has active subscription
         if (userId) {
             try {
                 const subscribedTrainerId = await getSubscribedTrainerId(userId)
                 if (subscribedTrainerId) {
                     relatedPlansWhere.trainerId = subscribedTrainerId
+                    console.log(`[Workout Plans] Filtering related plans for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
                 }
             } catch (error) {
-                console.error('Error checking subscription:', error)
+                console.error('[Workout Plans] Error checking subscription for related plans:', error)
             }
         }
 

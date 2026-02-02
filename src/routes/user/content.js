@@ -7,9 +7,11 @@ const { getPagination, executePaginatedQuery } = require('../../utils/pagination
 const { Content, Trainer, User, UserContentProgress } = require('../../models')
 const { Op } = require('sequelize')
 const { getSubscribedTrainerId } = require('../../services/subscriptionService')
+const { optionalAuth } = require('../../middleware/auth')
 
 // GET /user/content - Get all approved, public content for users
-router.get('/', async (req, res) => {
+// Use optionalAuth to get userId if authenticated, but allow unauthenticated access
+router.get('/', optionalAuth, async (req, res) => {
     try {
         const userId = req.user?.id
         const { type, category, difficulty, language, duration, search } = req.query
@@ -60,22 +62,32 @@ router.get('/', async (req, res) => {
             ]
         }
 
-        // Filter by subscribed trainer if user has active subscription
+        // CRITICAL: Filter by subscribed trainer if user has active subscription
+        // This ensures users only see content from their subscribed trainer
         if (userId) {
             try {
                 const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                console.log(`[Content] User ${userId} subscription check:`, {
+                    hasSubscription: !!subscribedTrainerId,
+                    trainerId: subscribedTrainerId
+                })
+                
                 if (subscribedTrainerId) {
                     whereClause.trainerId = subscribedTrainerId
-                    console.log(`[Content] Filtering content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                    console.log(`[Content] ✅ Filtering content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
                 } else {
-                    console.log(`[Content] User ${userId} has no active subscription - showing all public content`)
+                    console.log(`[Content] ⚠️ User ${userId} has no active subscription - showing all public content`)
                 }
             } catch (error) {
-                console.error('[Content] Error checking subscription:', error)
-                // Continue without filtering on error
+                console.error('[Content] ❌ Error checking subscription:', {
+                    error: error.message,
+                    stack: error.stack,
+                    userId: userId
+                })
+                // Continue without filtering on error - show all public content
             }
         } else {
-            console.log('[Content] No userId provided - showing all public content')
+            console.log('[Content] No userId provided (user not authenticated) - showing all public content')
         }
 
         const result = await executePaginatedQuery(Content, {
@@ -133,7 +145,7 @@ router.get('/categories', async (req, res) => {
 })
 
 // GET /user/content/:id - Get single content item
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
     try {
         const userId = req.user?.id
         const { id } = req.params
@@ -171,18 +183,34 @@ router.get('/:id', async (req, res) => {
         }
 
         // Get related content (same category or tags)
+        // Filter by subscribed trainer if user has active subscription
+        const relatedContentWhere = {
+            id: { [Op.ne]: id },
+            status: 'approved',
+            isPublic: true,
+            [Op.or]: [
+                { category: content.category },
+                ...(content.tags && content.tags.length > 0 ? [{
+                    tags: { [Op.overlap]: content.tags }
+                }] : [])
+            ]
+        }
+        
+        // Filter related content by subscribed trainer if user has active subscription
+        if (userId) {
+            try {
+                const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                if (subscribedTrainerId) {
+                    relatedContentWhere.trainerId = subscribedTrainerId
+                    console.log(`[Content] Filtering related content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                }
+            } catch (error) {
+                console.error('[Content] Error checking subscription for related content:', error)
+            }
+        }
+        
         const relatedContent = await Content.findAll({
-            where: {
-                id: { [Op.ne]: id },
-                status: 'approved',
-                isPublic: true,
-                [Op.or]: [
-                    { category: content.category },
-                    ...(content.tags && content.tags.length > 0 ? [{
-                        tags: { [Op.overlap]: content.tags }
-                    }] : [])
-                ]
-            },
+            where: relatedContentWhere,
             limit: 6,
             attributes: ['id', 'title', 'thumbnailUrl', 'duration', 'difficulty', 'views', 'likes'],
             include: [
