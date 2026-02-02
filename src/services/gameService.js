@@ -14,12 +14,8 @@ const {
  */
 async function spinAndWin(game) {
     try {
-        // Filter challenges by isGameChallenge flag
+        // Only filter by isGameChallenge flag - if admin marked it for games, use it
         const whereClause = {
-            active: true,
-            status: 'approved',
-            isPublic: true,
-            isDailyChallenge: false,
             isGameChallenge: true // Only challenges marked for games
         };
 
