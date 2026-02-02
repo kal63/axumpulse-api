@@ -25,20 +25,30 @@ function err(res, error, status = 500) {
     let message = 'An unexpected error occurred.';
     let details = {};
 
-    if (error.code) {
-        errorCode = error.code;
-    } else if (error.name === 'SequelizeUniqueConstraintError') {
+    // Handle error object with code and message properties
+    if (error && typeof error === 'object') {
+        if (error.code) {
+            errorCode = error.code;
+        }
+        if (error.message) {
+            message = error.message;
+        }
+        if (error.details) {
+            details = error.details;
+        }
+    }
+    
+    // Handle Sequelize-specific errors
+    if (error && error.name === 'SequelizeUniqueConstraintError') {
         errorCode = 'VALIDATION_ERROR';
-        message = 'A record with this unique field already exists.';
-        details = error.errors.map(e => ({ field: e.path, message: e.message }));
+        message = error.message || 'A record with this unique field already exists.';
+        details = error.errors ? error.errors.map(e => ({ field: e.path, message: e.message })) : {};
         status = 409; // Conflict
-    } else if (error.name === 'SequelizeValidationError') {
+    } else if (error && error.name === 'SequelizeValidationError') {
         errorCode = 'VALIDATION_ERROR';
-        message = 'Validation failed.';
-        details = error.errors.map(e => ({ field: e.path, message: e.message }));
+        message = error.message || 'Validation failed.';
+        details = error.errors ? error.errors.map(e => ({ field: e.path, message: e.message })) : {};
         status = 400; // Bad Request
-    } else if (error.message) {
-        message = error.message;
     }
 
     res.status(status).json({

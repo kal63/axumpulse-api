@@ -66,11 +66,16 @@ router.get('/', async (req, res) => {
                 const subscribedTrainerId = await getSubscribedTrainerId(userId)
                 if (subscribedTrainerId) {
                     whereClause.trainerId = subscribedTrainerId
+                    console.log(`[Content] Filtering content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                } else {
+                    console.log(`[Content] User ${userId} has no active subscription - showing all public content`)
                 }
             } catch (error) {
-                console.error('Error checking subscription:', error)
+                console.error('[Content] Error checking subscription:', error)
                 // Continue without filtering on error
             }
+        } else {
+            console.log('[Content] No userId provided - showing all public content')
         }
 
         const result = await executePaginatedQuery(Content, {

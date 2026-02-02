@@ -28,8 +28,17 @@ async function initializePayment(paymentData) {
         )
         return response.data
     } catch (error) {
-        console.error('Chapa payment initialization error:', error.response?.data || error.message)
-        throw error
+        console.error('Chapa payment initialization error:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status,
+            email: paymentData?.email
+        })
+        // Preserve the original error with response data for better error handling upstream
+        const enhancedError = new Error(error.message)
+        enhancedError.response = error.response
+        enhancedError.isChapaError = true
+        throw enhancedError
     }
 }
 

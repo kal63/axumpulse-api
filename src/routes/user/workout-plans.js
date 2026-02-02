@@ -61,11 +61,16 @@ router.get('/', async (req, res) => {
                 const subscribedTrainerId = await getSubscribedTrainerId(userId)
                 if (subscribedTrainerId) {
                     whereClause.trainerId = subscribedTrainerId
+                    console.log(`[Workout Plans] Filtering workouts for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                } else {
+                    console.log(`[Workout Plans] User ${userId} has no active subscription - showing all public workouts`)
                 }
             } catch (error) {
-                console.error('Error checking subscription:', error)
+                console.error('[Workout Plans] Error checking subscription:', error)
                 // Continue without filtering on error
             }
+        } else {
+            console.log('[Workout Plans] No userId provided - showing all public workouts')
         }
 
         const result = await executePaginatedQuery(WorkoutPlan, {
