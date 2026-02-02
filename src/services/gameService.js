@@ -10,40 +10,105 @@ const {
 /**
  * Spin & Win - Random challenge selection from challenges with isGameChallenge flag
  * @param {Object} game - Game model instance
+ * @param {Array} wheelChallenges - Optional array of challenge IDs/titles that are on the wheel (for better randomization)
+ * @param {Array} recentSelections - Optional array of recently selected challenge IDs to avoid immediate repeats
  * @returns {Promise<Object>} - Selected challenge with all details
  */
-async function spinAndWin(game) {
+async function spinAndWin(game, wheelChallenges = null, recentSelections = []) {
     try {
-        // Only filter by isGameChallenge flag - if admin marked it for games, use it
-        const whereClause = {
-            isGameChallenge: true // Only challenges marked for games
-        };
+        let challenges = [];
 
-        // Optionally filter by difficulty if game has one
-        if (game.difficulty) {
-            whereClause.difficulty = game.difficulty;
+        // If wheel challenges are provided, only select from those
+        if (wheelChallenges && Array.isArray(wheelChallenges) && wheelChallenges.length > 0) {
+            // Extract challenge IDs or titles from wheel challenges
+            const wheelIds = wheelChallenges.map(ch => ch.id || ch.challengeId).filter(Boolean);
+            const wheelTitles = wheelChallenges.map(ch => ch.title || ch.name).filter(Boolean);
+
+            // Fetch challenges that match the wheel
+            const whereClause = {
+                isGameChallenge: true
+            };
+
+            // Build OR condition for IDs or titles
+            const { Op } = require('sequelize');
+            if (wheelIds.length > 0 && wheelTitles.length > 0) {
+                whereClause[Op.or] = [
+                    { id: { [Op.in]: wheelIds } },
+                    { title: { [Op.in]: wheelTitles } }
+                ];
+            } else if (wheelIds.length > 0) {
+                whereClause.id = { [Op.in]: wheelIds };
+            } else if (wheelTitles.length > 0) {
+                whereClause.title = { [Op.in]: wheelTitles };
+            }
+
+            challenges = await Challenge.findAll({
+                where: whereClause,
+                order: [['createdAt', 'DESC']]
+            });
+        } else {
+            // Fallback: fetch all game challenges
+            const whereClause = {
+                isGameChallenge: true
+            };
+
+            // Optionally filter by difficulty if game has one
+            if (game.difficulty) {
+                whereClause.difficulty = game.difficulty;
+            }
+
+            // Optionally filter by type if game config specifies
+            const config = game.configJson || {};
+            if (config.challengeType) {
+                whereClause.type = config.challengeType;
+            }
+
+            challenges = await Challenge.findAll({
+                where: whereClause,
+                order: [['createdAt', 'DESC']],
+                limit: 100
+            });
         }
-
-        // Optionally filter by type if game config specifies
-        const config = game.configJson || {};
-        if (config.challengeType) {
-            whereClause.type = config.challengeType;
-        }
-
-        // Fetch available challenges
-        const challenges = await Challenge.findAll({
-            where: whereClause,
-            order: [['createdAt', 'DESC']],
-            limit: 100
-        });
 
         if (challenges.length === 0) {
             throw new Error('No challenges available for Spin & Win game. Mark challenges as "Game Challenge" to make them available.');
         }
 
-        // Randomly select a challenge
-        const randomIndex = Math.floor(Math.random() * challenges.length);
-        const selectedChallenge = challenges[randomIndex];
+        // Filter out recently selected challenges to avoid immediate repeats
+        let availableChallenges = challenges;
+        if (recentSelections && recentSelections.length > 0 && challenges.length > recentSelections.length) {
+            const beforeFilter = availableChallenges.length;
+            availableChallenges = challenges.filter(ch => !recentSelections.includes(ch.id));
+            // If filtering removed all challenges, use all challenges (better than nothing)
+            if (availableChallenges.length === 0) {
+                console.log('[spinAndWin] All challenges were in recent selections, using all challenges');
+                availableChallenges = challenges;
+            } else {
+                console.log(`[spinAndWin] Filtered out ${beforeFilter - availableChallenges.length} recently selected challenges`);
+            }
+        }
+
+        console.log(`[spinAndWin] Selecting from ${availableChallenges.length} available challenges`);
+
+        // Improved randomization using crypto for better randomness
+        let selectedChallenge;
+        if (availableChallenges.length === 1) {
+            selectedChallenge = availableChallenges[0];
+            console.log(`[spinAndWin] Only one challenge available, selected: ${selectedChallenge.title}`);
+        } else {
+            // Use crypto.randomInt for better randomness (Node.js 14.17.0+)
+            // Fallback to Math.random if crypto.randomInt is not available
+            let randomIndex;
+            try {
+                const crypto = require('crypto');
+                randomIndex = crypto.randomInt(0, availableChallenges.length);
+            } catch (e) {
+                // Fallback to Math.random with better distribution
+                randomIndex = Math.floor(Math.random() * availableChallenges.length);
+            }
+            selectedChallenge = availableChallenges[randomIndex];
+            console.log(`[spinAndWin] Randomly selected challenge ${randomIndex + 1}/${availableChallenges.length}: ${selectedChallenge.title} (ID: ${selectedChallenge.id})`);
+        }
 
         // Format challenge to match expected exercise structure
         // Use XP from challenge, not from game
