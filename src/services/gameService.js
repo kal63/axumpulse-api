@@ -1,6 +1,6 @@
 'use strict';
 
-const { Game, Challenge } = require('../models');
+const { Game, WorkoutPlan } = require('../models');
 const { Op } = require('sequelize');
 const { 
     generateQuizWithGemini, 
@@ -8,29 +8,28 @@ const {
 } = require('../utils/geminiGameGenerator');
 
 /**
- * Spin & Win - Random challenge selection from challenges with isGameChallenge flag
+ * Spin & Win - Random workout plan selection from workout plans with isGameChallenge flag
  * @param {Object} game - Game model instance
- * @param {Array} wheelChallenges - Optional array of challenge IDs/titles that are on the wheel (for better randomization)
- * @param {Array} recentSelections - Optional array of recently selected challenge IDs to avoid immediate repeats
- * @returns {Promise<Object>} - Selected challenge with all details
+ * @param {Array} wheelWorkouts - Optional array of workout plan IDs/titles that are on the wheel (for better randomization)
+ * @param {Array} recentSelections - Optional array of recently selected workout plan IDs to avoid immediate repeats
+ * @returns {Promise<Object>} - Selected workout plan with all details
  */
-async function spinAndWin(game, wheelChallenges = null, recentSelections = []) {
+async function spinAndWin(game, wheelWorkouts = null, recentSelections = []) {
     try {
-        let challenges = [];
+        let workoutPlans = [];
 
-        // If wheel challenges are provided, only select from those
-        if (wheelChallenges && Array.isArray(wheelChallenges) && wheelChallenges.length > 0) {
-            // Extract challenge IDs or titles from wheel challenges
-            const wheelIds = wheelChallenges.map(ch => ch.id || ch.challengeId).filter(Boolean);
-            const wheelTitles = wheelChallenges.map(ch => ch.title || ch.name).filter(Boolean);
+        // If wheel workouts are provided, only select from those
+        if (wheelWorkouts && Array.isArray(wheelWorkouts) && wheelWorkouts.length > 0) {
+            // Extract workout plan IDs or titles from wheel workouts
+            const wheelIds = wheelWorkouts.map(wp => wp.id || wp.workoutPlanId).filter(Boolean);
+            const wheelTitles = wheelWorkouts.map(wp => wp.title || wp.name).filter(Boolean);
 
-            // Fetch challenges that match the wheel
+            // Fetch workout plans that match the wheel
             const whereClause = {
                 isGameChallenge: true
             };
 
             // Build OR condition for IDs or titles
-            const { Op } = require('sequelize');
             if (wheelIds.length > 0 && wheelTitles.length > 0) {
                 whereClause[Op.or] = [
                     { id: { [Op.in]: wheelIds } },
@@ -42,12 +41,12 @@ async function spinAndWin(game, wheelChallenges = null, recentSelections = []) {
                 whereClause.title = { [Op.in]: wheelTitles };
             }
 
-            challenges = await Challenge.findAll({
+            workoutPlans = await WorkoutPlan.findAll({
                 where: whereClause,
                 order: [['createdAt', 'DESC']]
             });
         } else {
-            // Fallback: fetch all game challenges
+            // Fallback: fetch all game workout plans
             const whereClause = {
                 isGameChallenge: true
             };
@@ -57,76 +56,77 @@ async function spinAndWin(game, wheelChallenges = null, recentSelections = []) {
                 whereClause.difficulty = game.difficulty;
             }
 
-            // Optionally filter by type if game config specifies
+            // Optionally filter by category if game config specifies
             const config = game.configJson || {};
-            if (config.challengeType) {
-                whereClause.type = config.challengeType;
+            if (config.workoutCategory) {
+                whereClause.category = config.workoutCategory;
             }
 
-            challenges = await Challenge.findAll({
+            workoutPlans = await WorkoutPlan.findAll({
                 where: whereClause,
                 order: [['createdAt', 'DESC']],
                 limit: 100
             });
         }
 
-        if (challenges.length === 0) {
-            throw new Error('No challenges available for Spin & Win game. Mark challenges as "Game Challenge" to make them available.');
+        if (workoutPlans.length === 0) {
+            throw new Error('No workout plans available for Spin & Win game. Mark workout plans as "Game Challenge" to make them available.');
         }
 
-        // Filter out recently selected challenges to avoid immediate repeats
-        let availableChallenges = challenges;
-        if (recentSelections && recentSelections.length > 0 && challenges.length > recentSelections.length) {
-            const beforeFilter = availableChallenges.length;
-            availableChallenges = challenges.filter(ch => !recentSelections.includes(ch.id));
-            // If filtering removed all challenges, use all challenges (better than nothing)
-            if (availableChallenges.length === 0) {
-                console.log('[spinAndWin] All challenges were in recent selections, using all challenges');
-                availableChallenges = challenges;
+        // Filter out recently selected workout plans to avoid immediate repeats
+        let availableWorkoutPlans = workoutPlans;
+        if (recentSelections && recentSelections.length > 0 && workoutPlans.length > recentSelections.length) {
+            const beforeFilter = availableWorkoutPlans.length;
+            availableWorkoutPlans = workoutPlans.filter(wp => !recentSelections.includes(wp.id));
+            // If filtering removed all workout plans, use all workout plans (better than nothing)
+            if (availableWorkoutPlans.length === 0) {
+                console.log('[spinAndWin] All workout plans were in recent selections, using all workout plans');
+                availableWorkoutPlans = workoutPlans;
             } else {
-                console.log(`[spinAndWin] Filtered out ${beforeFilter - availableChallenges.length} recently selected challenges`);
+                console.log(`[spinAndWin] Filtered out ${beforeFilter - availableWorkoutPlans.length} recently selected workout plans`);
             }
         }
 
-        console.log(`[spinAndWin] Selecting from ${availableChallenges.length} available challenges`);
+        console.log(`[spinAndWin] Selecting from ${availableWorkoutPlans.length} available workout plans`);
 
         // Improved randomization using crypto for better randomness
-        let selectedChallenge;
-        if (availableChallenges.length === 1) {
-            selectedChallenge = availableChallenges[0];
-            console.log(`[spinAndWin] Only one challenge available, selected: ${selectedChallenge.title}`);
+        let selectedWorkoutPlan;
+        if (availableWorkoutPlans.length === 1) {
+            selectedWorkoutPlan = availableWorkoutPlans[0];
+            console.log(`[spinAndWin] Only one workout plan available, selected: ${selectedWorkoutPlan.title}`);
         } else {
             // Use crypto.randomInt for better randomness (Node.js 14.17.0+)
             // Fallback to Math.random if crypto.randomInt is not available
             let randomIndex;
             try {
                 const crypto = require('crypto');
-                randomIndex = crypto.randomInt(0, availableChallenges.length);
+                randomIndex = crypto.randomInt(0, availableWorkoutPlans.length);
             } catch (e) {
                 // Fallback to Math.random with better distribution
-                randomIndex = Math.floor(Math.random() * availableChallenges.length);
+                randomIndex = Math.floor(Math.random() * availableWorkoutPlans.length);
             }
-            selectedChallenge = availableChallenges[randomIndex];
-            console.log(`[spinAndWin] Randomly selected challenge ${randomIndex + 1}/${availableChallenges.length}: ${selectedChallenge.title} (ID: ${selectedChallenge.id})`);
+            selectedWorkoutPlan = availableWorkoutPlans[randomIndex];
+            console.log(`[spinAndWin] Randomly selected workout plan ${randomIndex + 1}/${availableWorkoutPlans.length}: ${selectedWorkoutPlan.title} (ID: ${selectedWorkoutPlan.id})`);
         }
 
-        // Format challenge to match expected exercise structure
-        // Use XP from challenge, not from game
+        // Format workout plan to match expected exercise structure
+        // Use default XP since WorkoutPlan doesn't have xpReward field
         return {
-            title: selectedChallenge.title,
-            name: selectedChallenge.title, // For backward compatibility
-            description: selectedChallenge.description || null,
-            requirements: selectedChallenge.requirements || null,
-            difficulty: selectedChallenge.difficulty || 'beginner',
-            type: selectedChallenge.type || 'fitness',
-            xpReward: selectedChallenge.xpReward || 50, // Use challenge XP
-            category: selectedChallenge.type,
+            title: selectedWorkoutPlan.title,
+            name: selectedWorkoutPlan.title, // For backward compatibility
+            description: selectedWorkoutPlan.description || null,
+            requirements: null, // WorkoutPlan doesn't have requirements field
+            difficulty: selectedWorkoutPlan.difficulty || 'beginner',
+            type: selectedWorkoutPlan.category || 'fitness',
+            xpReward: game.xpReward || 50, // Use game XP since WorkoutPlan doesn't have xpReward
+            category: selectedWorkoutPlan.category || 'fitness',
             muscleGroup: null,
             muscleGroups: null,
-            challengeId: selectedChallenge.id // Include challenge ID for reference
+            workoutPlanId: selectedWorkoutPlan.id, // Include workout plan ID for reference
+            challengeId: selectedWorkoutPlan.id // Keep for backward compatibility
         };
     } catch (error) {
-        console.error('Error fetching challenges for Spin & Win:', error);
+        console.error('Error fetching workout plans for Spin & Win:', error);
         throw error;
     }
 }

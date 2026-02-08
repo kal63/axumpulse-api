@@ -361,15 +361,15 @@ router.post('/:id/play', async (req, res) => {
 
         switch (game.gameType) {
             case 'spin_win':
-                // Get wheel challenges from request body if provided
-                const wheelChallenges = req.body.wheelChallenges || null;
+                // Get wheel workouts from request body if provided (backward compatible with wheelChallenges)
+                const wheelWorkouts = req.body.wheelWorkouts || req.body.wheelChallenges || null;
                 // Get recent selections from request body to avoid immediate repeats
                 const recentSelections = req.body.recentSelections || [];
                 
-                const exercise = await spinAndWin(game, wheelChallenges, recentSelections);
+                const exercise = await spinAndWin(game, wheelWorkouts, recentSelections);
                 gameContent = { 
                     exercise,
-                    challengeXp: exercise.xpReward // Pass challenge XP for use in submit
+                    challengeXp: exercise.xpReward // Pass workout plan XP for use in submit
                 };
                 break;
 

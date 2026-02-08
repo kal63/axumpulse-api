@@ -138,12 +138,23 @@ module.exports = (sequelize, DataTypes) => {
         rejectedAt: {
             type: DataTypes.DATE,
             allowNull: true
+        },
+        isGameChallenge: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Whether this workout plan is available for use in games (spin & win)'
         }
     }, {
         sequelize,
         modelName: 'WorkoutPlan',
         tableName: 'WorkoutPlans',
-        timestamps: true
+        timestamps: true,
+        indexes: [
+            {
+                fields: ['isGameChallenge']
+            }
+        ]
     });
 
     return WorkoutPlan;

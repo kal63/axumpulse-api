@@ -16,6 +16,12 @@ module.exports = (sequelize, DataTypes) => {
                 foreignKey: 'workoutPlanId',
                 as: 'workoutPlan'
             })
+
+            // Belongs to Game (if won from a game)
+            UserWorkoutPlanProgress.belongsTo(models.Game, {
+                foreignKey: 'fromGameId',
+                as: 'fromGame'
+            })
         }
     }
 
@@ -60,6 +66,11 @@ module.exports = (sequelize, DataTypes) => {
         xpEarned: {
             type: DataTypes.INTEGER,
             defaultValue: 0
+        },
+        fromGameId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            comment: 'ID of the game this workout plan was won from (for bonus XP)'
         }
     }, {
         sequelize,

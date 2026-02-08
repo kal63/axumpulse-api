@@ -22,7 +22,7 @@ router.use(requireAuth)
 router.post('/workout-plan/start', async (req, res) => {
     try {
         const userId = req.user.id
-        const { workoutPlanId } = req.body
+        const { workoutPlanId, gameId } = req.body
 
         if (!workoutPlanId) {
             return err(res, { code: 'VALIDATION_ERROR', message: 'workoutPlanId is required' }, 400)
@@ -45,6 +45,15 @@ router.post('/workout-plan/start', async (req, res) => {
             return err(res, { code: 'NOT_FOUND', message: 'Workout plan not found' }, 404)
         }
 
+        // If gameId is provided, verify the game exists
+        if (gameId) {
+            const { Game } = require('../models')
+            const game = await Game.findByPk(gameId)
+            if (!game) {
+                return err(res, { code: 'NOT_FOUND', message: 'Game not found' }, 404)
+            }
+        }
+
         // Check if user already has progress for this plan
         let progress = await UserWorkoutPlanProgress.findOne({
             where: { userId, workoutPlanId }
@@ -54,6 +63,10 @@ router.post('/workout-plan/start', async (req, res) => {
             // Update existing progress
             progress.status = 'active'
             progress.lastAccessedAt = new Date()
+            // Update fromGameId if provided and not already set
+            if (gameId && !progress.fromGameId) {
+                progress.fromGameId = gameId
+            }
             await progress.save()
         } else {
             // Create new progress
@@ -64,11 +77,50 @@ router.post('/workout-plan/start', async (req, res) => {
                 startedAt: new Date(),
                 lastAccessedAt: new Date(),
                 totalExercises: workoutPlan.exercises?.length || 0,
-                completedExercises: 0
+                completedExercises: 0,
+                fromGameId: gameId || null
             })
         }
 
-        ok(res, progress)
+        // Get first exercise to start timer
+        const firstExercise = workoutPlan.exercises?.[0]
+        let firstExerciseProgress = null
+        if (firstExercise) {
+            const { UserExerciseProgress } = require('../models')
+            const [exerciseProgress] = await UserExerciseProgress.findOrCreate({
+                where: {
+                    userId,
+                    workoutPlanId,
+                    exerciseId: firstExercise.id
+                },
+                defaults: {
+                    userId,
+                    workoutPlanId,
+                    exerciseId: firstExercise.id,
+                    completed: false,
+                    startedAt: new Date()
+                }
+            })
+            
+            // If exercise progress already exists but doesn't have startedAt, update it
+            if (exerciseProgress && !exerciseProgress.startedAt) {
+                exerciseProgress.startedAt = new Date()
+                await exerciseProgress.save()
+            }
+            
+            if (exerciseProgress) {
+                firstExerciseProgress = {
+                    exerciseId: exerciseProgress.exerciseId,
+                    startedAt: exerciseProgress.startedAt ? exerciseProgress.startedAt.toISOString() : new Date().toISOString(),
+                    completed: exerciseProgress.completed
+                }
+            }
+        }
+
+        ok(res, {
+            planProgress: progress,
+            firstExerciseProgress
+        })
     } catch (error) {
         err(res, error)
     }
@@ -135,7 +187,30 @@ router.post('/exercise/complete', async (req, res) => {
             if (completedCount >= planProgress.totalExercises) {
                 planProgress.status = 'completed'
                 planProgress.completedAt = new Date()
-                planProgress.xpEarned = planProgress.totalExercises * 25 + 100 // Bonus XP for completing plan
+                
+                // Calculate base XP: (totalExercises * 25) + 100 bonus
+                let baseXP = planProgress.totalExercises * 25 + 100
+                
+                // Add 50 XP bonus if this workout plan was won from a game
+                if (planProgress.fromGameId) {
+                    baseXP += 50
+                }
+                
+                planProgress.xpEarned = baseXP
+                
+                // Award XP to user
+                const { awardXP } = require('../services/xpService')
+                try {
+                    await awardXP(
+                        userId,
+                        baseXP,
+                        'workout_plan',
+                        `Completed workout plan${planProgress.fromGameId ? ' (won from game)' : ''}`
+                    )
+                } catch (xpError) {
+                    console.error('Error awarding XP for workout plan completion:', xpError)
+                    // Don't fail the request if XP award fails
+                }
             }
 
             await planProgress.save()
