@@ -329,7 +329,6 @@ router.get('/questions/:id', async (req, res) => {
 // GET /api/v1/user/medical/consults/doctors - List available medical professionals
 router.get('/consults/doctors', async (req, res) => {
   try {
-    const { Op } = require('sequelize')
     const doctors = await User.findAll({
       where: { isMedical: true },
       include: [
@@ -337,8 +336,7 @@ router.get('/consults/doctors', async (req, res) => {
           model: MedicalProfessional,
           as: 'medicalProfessional',
           where: { 
-            verified: true,
-            consultFee: { [Op.ne]: null } // Only show doctors with set consult fee
+            verified: true
           },
           required: true,
           attributes: ['professionalType', 'specialties', 'verified', 'consultFee']
