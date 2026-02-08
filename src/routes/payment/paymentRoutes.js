@@ -363,8 +363,13 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
             return err(res, { code: 'BAD_REQUEST', message: 'Phone number is required' }, 400)
         }
 
-        if (!email) {
-            return err(res, { code: 'BAD_REQUEST', message: 'Email is required' }, 400)
+        // Validate phone number format (Ethiopian format: 09xxxxxxxx or 07xxxxxxxx)
+        const phoneRegex = /^(09|07)[0-9]{8}$/
+        if (!phoneRegex.test(phone_number)) {
+            return err(res, {
+                code: 'VALIDATION_ERROR',
+                message: 'Phone number must start with 09 or 07 followed by 8 digits'
+            }, 400)
         }
 
         const quantityNum = parseInt(quantity)
@@ -398,22 +403,172 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
         // Generate unique transaction reference
         const txRef = `CONSULT-${user.id}-${doctorId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 
+        // Construct URLs from environment variables (same as subscription payment)
+        const frontendUrl = process.env.FRONTEND_URL || 
+            (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '') : 'http://localhost:3001')
+        const backendUrl = process.env.API_BASE_URL || 
+            process.env.BACKEND_URL || 
+            `http://localhost:${process.env.PORT || 3001}`
+
+        // Validate and sanitize email (similar to subscription payment)
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        let customerEmail = email || user.email
+
+        // List of invalid email domains that Chapa doesn't accept
+        const invalidDomains = [
+            'test.com',
+            'example.com',
+            'testmail.com',
+            'mailinator.com',
+            '10minutemail.com',
+            'guerrillamail.com',
+            'tempmail.com',
+            'throwaway.email',
+            'yopmail.com',
+            'mohmal.com',
+            'fakeinbox.com',
+            'trashmail.com',
+            'getnada.com',
+            'maildrop.cc',
+            'mintemail.com',
+            'sharklasers.com',
+            'grr.la',
+            'guerrillamailblock.com',
+            'pokemail.net',
+            'spam4.me',
+            'bccto.me',
+            'chammy.info',
+            'devnullmail.com',
+            'dispostable.com',
+            'emailondeck.com',
+            'frapmail.com',
+            'getairmail.com',
+            'getmails.eu',
+            'gishpuppy.com',
+            'inboxalias.com',
+            'meltmail.com',
+            'melt.li',
+            'mintemail.com',
+            'mohmal.com',
+            'mytrashmail.com',
+            'nowemail.me',
+            'nowmymail.com',
+            'putthisinyourspamdatabase.com',
+            'rcpt.at',
+            'recode.me',
+            'safetymail.info',
+            'sendspamhere.com',
+            'spamherelots.com',
+            'spamhereplease.com',
+            'spamhole.com',
+            'spamify.com',
+            'tempail.com',
+            'tempalias.com',
+            'tempe-mail.com',
+            'tempemail.biz',
+            'tempinbox.co.uk',
+            'tempinbox.com',
+            'tempmail.it',
+            'tempmail2.com',
+            'tempymail.com',
+            'thankyou2010.com',
+            'thisisnotmyrealemail.com',
+            'tmail.ws',
+            'tradermail.info',
+            'trash-amil.com',
+            'trashmail.at',
+            'trashmail.com',
+            'trashmail.de',
+            'trashmail.me',
+            'trashmail.net',
+            'trashmail.org',
+            'trashymail.com',
+            'tyldd.com',
+            'wh4f.org',
+            'whyspam.me',
+            'willselfdestruct.com',
+            'winemaven.info',
+            'wronghead.com',
+            'wuzup.net',
+            'wuzupmail.net',
+            'xagloo.com',
+            'xemaps.com',
+            'xents.com',
+            'xmaily.com',
+            'xoxy.net',
+            'yapped.net',
+            'yeah.net',
+            'yogamaven.com',
+            'yopmail.com',
+            'yopmail.fr',
+            'yopmail.net',
+            'youmailr.com',
+            'ypmail.webnast.net',
+            'zippymail.info',
+            'zoemail.org'
+        ]
+        
+        // Check if provided email uses an invalid domain
+        if (customerEmail && emailRegex.test(customerEmail)) {
+            const emailDomain = customerEmail.split('@')[1]?.toLowerCase()
+            if (emailDomain && invalidDomains.includes(emailDomain)) {
+                return err(res, {
+                    code: 'VALIDATION_ERROR',
+                    message: 'The payment gateway does not accept test email addresses. Please use a valid email address (e.g., Gmail, Yahoo, Outlook, or your company email).',
+                }, 400)
+            }
+        }
+        
+        if (!customerEmail || !emailRegex.test(customerEmail)) {
+            // Create a valid email from phone number (remove + and spaces, keep only digits)
+            const cleanPhone = (phone_number || user.phone || '').replace(/[^\d]/g, '').replace(/^251/, '')
+            if (cleanPhone && cleanPhone.length >= 9) {
+                customerEmail = `user${cleanPhone}@axumpulse.com`
+            } else {
+                // Final fallback
+                customerEmail = `user${user.id}@axumpulse.com`
+            }
+        }
+
+        // Final validation - ensure email is valid
+        if (!emailRegex.test(customerEmail)) {
+            return err(res, {
+                code: 'VALIDATION_ERROR',
+                message: 'Invalid email format. Please provide a valid email address.',
+            }, 400)
+        }
+
+        console.log('Using email for Chapa payment:', customerEmail)
+
         // Prepare payment data for Chapa
+        // Sanitize doctor name for description (remove special characters that might cause issues)
+        const sanitizedDoctorName = (doctor.name || 'Doctor').replace(/[^\w\s-]/g, '').trim()
+        const description = `Purchase ${quantityNum} consult${quantityNum > 1 ? 's' : ''} from ${sanitizedDoctorName}`.substring(0, 50)
+        
         const paymentData = {
-            amount: amount.toString(),
+            amount: String(amount),
             currency: 'ETB',
-            email: email,
+            email: customerEmail,
             first_name: user.name?.split(' ')[0] || 'User',
             last_name: user.name?.split(' ').slice(1).join(' ') || '',
             phone_number: phone_number,
             tx_ref: txRef,
-            callback_url: `${process.env.API_BASE_URL || 'http://localhost:3001'}/api/v1/payments/chapa/callback/${txRef}`,
-            return_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?tx_ref=${txRef}`,
+            callback_url: `${backendUrl}/api/v1/payments/chapa/callback/${txRef}`,
+            return_url: `${frontendUrl}/payment/success?tx_ref=${txRef}`,
             customization: {
-                title: 'Consult Purchase',
-                description: `Purchase ${quantityNum} consult(s) from ${doctor.name}`
+                title: 'Consult Purchase'.substring(0, 16),
+                description: description
             }
         }
+
+        // Log payment data for debugging (without sensitive info)
+        console.log('Chapa payment data (consult):', {
+            amount: paymentData.amount,
+            currency: paymentData.currency,
+            email: paymentData.email,
+            tx_ref: paymentData.tx_ref,
+            customization: paymentData.customization
+        })
 
         // Initialize payment with Chapa
         const payment = await initializePayment(paymentData)
@@ -455,7 +610,7 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
             amount: amount,
             currency: 'ETB',
             status: 'pending',
-            customerEmail: email,
+            customerEmail: customerEmail,
             customerName: user.name || 'User',
             customerPhone: phone_number,
             callbackData: { 
@@ -481,10 +636,30 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
             responseStatus: error.response?.status,
         })
 
+        // Check if this is a Chapa validation error
+        const isChapaValidationError = error.response?.status === 400
+        const chapaErrorMessage = error.response?.data?.message
+        
+        // Check if email is the issue
+        const isEmailError = error.response?.data?.message?.email || 
+                            (chapaErrorMessage && typeof chapaErrorMessage === 'object' && chapaErrorMessage.email)
+        
+        if (isEmailError || (isChapaValidationError && req.body?.email)) {
+            return err(res, {
+                code: 'VALIDATION_ERROR',
+                message: 'The payment gateway does not accept this email address. Please use a valid email address (e.g., Gmail, Yahoo, Outlook, or your company email).',
+            }, 400)
+        }
+
+        // Return user-friendly error message
+        const userFriendlyMessage = chapaErrorMessage || 
+                                   (error.response?.status === 400 ? 'Invalid payment information. Please check your details and try again.' : 
+                                    'Payment initialization failed. Please try again later or contact support if the problem persists.')
+
         return err(res, {
-            code: 'INTERNAL_ERROR',
-            message: 'An error occurred while initializing payment',
-        }, 500)
+            code: isChapaValidationError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
+            message: userFriendlyMessage,
+        }, isChapaValidationError ? 400 : 500)
     }
 })
 
