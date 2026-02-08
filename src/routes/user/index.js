@@ -15,6 +15,7 @@ const { router: dailyChallengesRouter } = require('./daily-challenges')
 const { router: gamesRouter } = require('./games')
 const { router: leaderboardRouter } = require('./leaderboard')
 const medicalRouter = require('./medical')
+const languagesRouter = require('./languages')
 
 // Mount routes
 router.use('/content', contentRouter)
@@ -28,6 +29,7 @@ router.use('/daily-challenges', dailyChallengesRouter)
 router.use('/games', gamesRouter)
 router.use('/leaderboard', leaderboardRouter)
 router.use('/medical', medicalRouter)
+router.use('/languages', languagesRouter)
 
 module.exports = router
 
