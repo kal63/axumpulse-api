@@ -14,7 +14,8 @@ module.exports = (sequelize, DataTypes) => {
       verified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       applicationId: { type: DataTypes.INTEGER, allowNull: true },
       verifiedAt: { type: DataTypes.DATE, allowNull: true },
-      verifiedBy: { type: DataTypes.INTEGER, allowNull: true }
+      verifiedBy: { type: DataTypes.INTEGER, allowNull: true },
+      consultFee: { type: DataTypes.DECIMAL(10, 2), allowNull: true, defaultValue: null }
     },
     {
       tableName: 'medical_professionals',

@@ -19,7 +19,8 @@ const {
   HealthDataRollup,
   HealthAlert,
   User,
-  MedicalProfessional
+  MedicalProfessional,
+  UserProfile
 } = require('../../../models')
 const { Op } = require('sequelize')
 // const { evaluateTriageRules } = require('../../../utils/triageEngine')
@@ -328,15 +329,19 @@ router.get('/questions/:id', async (req, res) => {
 // GET /api/v1/user/medical/consults/doctors - List available medical professionals
 router.get('/consults/doctors', async (req, res) => {
   try {
+    const { Op } = require('sequelize')
     const doctors = await User.findAll({
       where: { isMedical: true },
       include: [
         {
           model: MedicalProfessional,
           as: 'medicalProfessional',
-          where: { verified: true },
+          where: { 
+            verified: true,
+            consultFee: { [Op.ne]: null } // Only show doctors with set consult fee
+          },
           required: true,
-          attributes: ['professionalType', 'specialties', 'verified']
+          attributes: ['professionalType', 'specialties', 'verified', 'consultFee']
         }
       ],
       attributes: ['id', 'name', 'profilePicture', 'email'],
@@ -346,6 +351,29 @@ router.get('/consults/doctors', async (req, res) => {
     ok(res, doctors)
   } catch (error) {
     console.error('Error fetching doctors:', error)
+    err(res, error)
+  }
+})
+
+// GET /api/v1/user/medical/consults/balance - Get available consult count
+router.get('/consults/balance', async (req, res) => {
+  try {
+    const userId = req.user?.id
+    if (!userId) {
+      return err(res, { code: 'UNAUTHORIZED', message: 'User not authenticated' }, 401)
+    }
+
+    const profile = await UserProfile.findOne({ where: { userId } })
+    
+    if (!profile) {
+      // Create profile if it doesn't exist
+      const newProfile = await UserProfile.create({ userId, availableConsults: 0 })
+      return ok(res, { availableConsults: 0 })
+    }
+
+    ok(res, { availableConsults: profile.availableConsults || 0 })
+  } catch (error) {
+    console.error('Error fetching consult balance:', error)
     err(res, error)
   }
 })
@@ -599,6 +627,17 @@ router.post('/consults/bookings', async (req, res) => {
       }, 404)
     }
 
+    // Check if user has available consults
+    const profile = await UserProfile.findOne({ where: { userId } })
+    const availableConsults = profile ? (profile.availableConsults || 0) : 0
+    
+    if (availableConsults <= 0) {
+      return err(res, { 
+        code: 'INSUFFICIENT_CONSULTS', 
+        message: 'You do not have any available consults. Please purchase consults before booking.' 
+      }, 400)
+    }
+
     const endDateTime = new Date(startDateTime)
     endDateTime.setUTCMinutes(endDateTime.getUTCMinutes() + slotDuration)
 
@@ -624,12 +663,33 @@ router.post('/consults/bookings', async (req, res) => {
       }
     }
 
-    // Create booking
-    const booking = await ConsultBooking.create({
-      userId,
-      slotId: slot.id,
-      status: 'booked'
+    // Create booking and decrement available consults in a transaction
+    const sequelize = require('sequelize')
+    const db = require('../../../models').sequelize
+    
+    const result = await db.transaction(async (t) => {
+      // Create booking
+      const booking = await ConsultBooking.create({
+        userId,
+        slotId: slot.id,
+        status: 'booked'
+      }, { transaction: t })
+
+      // Decrement available consults
+      if (profile) {
+        await profile.decrement('availableConsults', { by: 1, transaction: t })
+      } else {
+        // This shouldn't happen since we checked above, but handle it just in case
+        await UserProfile.create({ 
+          userId, 
+          availableConsults: 0 
+        }, { transaction: t })
+      }
+
+      return booking
     })
+
+    const booking = result
 
     // Mark slot as closed
     await slot.update({ status: 'closed' })

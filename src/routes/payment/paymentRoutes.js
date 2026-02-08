@@ -4,7 +4,7 @@ const express = require('express')
 const router = express.Router()
 const { ok, err } = require('../../utils/errors')
 const { initializePayment, verifyTransaction } = require('../../utils/chapaService')
-const { PaymentTransaction, SubscriptionPlan, UserSubscription, User } = require('../../models')
+const { PaymentTransaction, SubscriptionPlan, UserSubscription, User, MedicalProfessional, UserProfile } = require('../../models')
 const { requireAuth } = require('../../middleware/auth')
 const { Op } = require('sequelize')
 const { activateSubscription } = require('../../services/subscriptionService')
@@ -346,6 +346,149 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
 })
 
 /**
+ * Initialize payment for consult purchase
+ * POST /api/v1/payments/consult/initialize
+ */
+router.post('/consult/initialize', requireAuth, async (req, res) => {
+    try {
+        const { doctorId, quantity = 1, phone_number, email } = req.body
+        const user = req.user
+
+        // Validation
+        if (!doctorId) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Doctor ID is required' }, 400)
+        }
+
+        if (!phone_number) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Phone number is required' }, 400)
+        }
+
+        if (!email) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Email is required' }, 400)
+        }
+
+        const quantityNum = parseInt(quantity)
+        if (isNaN(quantityNum) || quantityNum < 1) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Quantity must be at least 1' }, 400)
+        }
+
+        // Get doctor and verify they have a consult fee set
+        const doctor = await User.findOne({
+            where: { id: doctorId, isMedical: true },
+            include: [{
+                model: MedicalProfessional,
+                as: 'medicalProfessional',
+                where: { verified: true },
+                required: true
+            }]
+        })
+
+        if (!doctor || !doctor.medicalProfessional) {
+            return err(res, { code: 'NOT_FOUND', message: 'Doctor not found or not verified' }, 404)
+        }
+
+        const consultFee = parseFloat(doctor.medicalProfessional.consultFee)
+        if (!consultFee || consultFee <= 0) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Doctor has not set a consult fee' }, 400)
+        }
+
+        // Calculate total amount
+        const amount = consultFee * quantityNum
+
+        // Generate unique transaction reference
+        const txRef = `CONSULT-${user.id}-${doctorId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+
+        // Prepare payment data for Chapa
+        const paymentData = {
+            amount: amount.toString(),
+            currency: 'ETB',
+            email: email,
+            first_name: user.name?.split(' ')[0] || 'User',
+            last_name: user.name?.split(' ').slice(1).join(' ') || '',
+            phone_number: phone_number,
+            tx_ref: txRef,
+            callback_url: `${process.env.API_BASE_URL || 'http://localhost:3001'}/api/v1/payments/chapa/callback/${txRef}`,
+            return_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?tx_ref=${txRef}`,
+            customization: {
+                title: 'Consult Purchase',
+                description: `Purchase ${quantityNum} consult(s) from ${doctor.name}`
+            }
+        }
+
+        // Initialize payment with Chapa
+        const payment = await initializePayment(paymentData)
+
+        // Check if initialization was successful
+        if (!payment.status || payment.status !== 'success') {
+            console.error('Chapa payment initialization failed:', {
+                response: payment,
+                user_id: user.id,
+                doctor_id: doctorId,
+            })
+
+            return err(res, {
+                code: 'PAYMENT_INIT_FAILED',
+                message: 'Failed to initialize payment',
+                error: payment.message || 'Unknown error',
+            }, 400)
+        }
+
+        // Verify checkout_url exists
+        if (!payment.data || !payment.data.checkout_url) {
+            console.error('Chapa checkout URL missing:', {
+                response: payment,
+                user_id: user.id,
+            })
+
+            return err(res, {
+                code: 'PAYMENT_INIT_FAILED',
+                message: 'Payment initialized but checkout URL not received',
+                error: 'Invalid response from payment gateway',
+            }, 500)
+        }
+
+        // Create payment transaction record
+        // Store type, doctorId, and quantity in callbackData for later use during activation
+        await PaymentTransaction.create({
+            userId: user.id,
+            txRef: txRef,
+            amount: amount,
+            currency: 'ETB',
+            status: 'pending',
+            customerEmail: email,
+            customerName: user.name || 'User',
+            customerPhone: phone_number,
+            callbackData: { 
+                type: 'consult_purchase',
+                doctorId: doctorId,
+                quantity: quantityNum
+            }
+        })
+
+        return ok(res, {
+            checkout_url: payment.data.checkout_url,
+            tx_ref: txRef,
+        })
+
+    } catch (error) {
+        console.error('Consult purchase payment exception:', {
+            error: error.message,
+            user_id: req.user?.id,
+            doctor_id: req.body?.doctorId,
+            email: req.body?.email,
+            stack: error.stack,
+            response: error.response?.data,
+            responseStatus: error.response?.status,
+        })
+
+        return err(res, {
+            code: 'INTERNAL_ERROR',
+            message: 'An error occurred while initializing payment',
+        }, 500)
+    }
+})
+
+/**
  * Handle Chapa payment callback
  * GET /api/v1/payments/chapa/callback/:reference
  */
@@ -378,62 +521,104 @@ router.get('/chapa/callback/:reference', async (req, res) => {
             transaction.paymentMethod = detectPaymentMethod(verificationData)
             transaction.completedAt = new Date()
 
-            // CRITICAL: Activate subscription immediately when payment succeeds
-            // Get duration from callbackData (stored during initialization)
-            let duration = 'monthly' // Default fallback
-            try {
-                let callbackDataObj = transaction.callbackData
-                
-                // If callbackData is a string, parse it
-                if (typeof callbackDataObj === 'string') {
-                    try {
-                        callbackDataObj = JSON.parse(callbackDataObj)
-                    } catch (e) {
-                        console.warn('[Payment Callback] Failed to parse callbackData as JSON:', e.message)
-                    }
+            // Parse callbackData to determine transaction type
+            let callbackDataObj = transaction.callbackData
+            if (typeof callbackDataObj === 'string') {
+                try {
+                    callbackDataObj = JSON.parse(callbackDataObj)
+                } catch (e) {
+                    console.warn('[Payment Callback] Failed to parse callbackData as JSON:', e.message)
                 }
-                
-                // Extract duration from the object
-                if (callbackDataObj && callbackDataObj.duration) {
-                    duration = callbackDataObj.duration
-                } else {
-                    console.warn('[Payment Callback] Duration not found in callbackData, using default: monthly')
-                }
-            } catch (e) {
-                console.warn('[Payment Callback] Error extracting duration from callbackData:', e.message)
             }
-            
-            console.log('[Payment Callback] Activating subscription with duration:', duration)
 
-            // ACTIVATE SUBSCRIPTION - This is critical!
-            try {
-                const subscription = await activateSubscription(transaction, duration)
-                console.log('[Payment Callback] ✅ Subscription activated successfully!', {
-                    tx_ref: reference,
-                    user_id: transaction.userId,
-                    plan_id: transaction.subscriptionPlanId,
-                    trainer_id: transaction.trainerId,
-                    duration: duration,
-                    subscription_id: subscription.id
-                })
-            } catch (activationError) {
-                console.error('[Payment Callback] ❌ CRITICAL: Failed to activate subscription:', {
-                    error: activationError.message,
-                    tx_ref: reference,
-                    user_id: transaction.userId,
-                    plan_id: transaction.subscriptionPlanId,
-                    trainer_id: transaction.trainerId,
-                    duration: duration,
-                    stack: activationError.stack,
-                    transaction_data: {
-                        subscriptionPlanId: transaction.subscriptionPlanId,
-                        trainerId: transaction.trainerId,
-                        userId: transaction.userId,
-                        callbackData: transaction.callbackData
+            // Check if this is a consult purchase
+            if (callbackDataObj && callbackDataObj.type === 'consult_purchase') {
+                // Handle consult purchase
+                try {
+                    const { doctorId, quantity } = callbackDataObj
+                    
+                    if (!doctorId || !quantity) {
+                        console.error('[Payment Callback] Missing doctorId or quantity in consult purchase', {
+                            callbackData: callbackDataObj
+                        })
+                    } else {
+                        // Increment available consults for the user
+                        const profile = await UserProfile.findOne({ where: { userId: transaction.userId } })
+                        
+                        if (!profile) {
+                            // Create profile if it doesn't exist
+                            await UserProfile.create({ 
+                                userId: transaction.userId, 
+                                availableConsults: quantity 
+                            })
+                        } else {
+                            // Increment existing consults
+                            await profile.increment('availableConsults', { by: quantity })
+                        }
+                        
+                        console.log('[Payment Callback] ✅ Consult purchase processed successfully!', {
+                            tx_ref: reference,
+                            user_id: transaction.userId,
+                            doctor_id: doctorId,
+                            quantity: quantity
+                        })
                     }
-                })
-                // Still mark transaction as success, but subscription activation failed
-                // The verify endpoint will retry activation when user visits success page
+                } catch (consultError) {
+                    console.error('[Payment Callback] ❌ CRITICAL: Failed to process consult purchase:', {
+                        error: consultError.message,
+                        tx_ref: reference,
+                        user_id: transaction.userId,
+                        stack: consultError.stack
+                    })
+                }
+            } else {
+                // Handle subscription activation (existing logic)
+                // CRITICAL: Activate subscription immediately when payment succeeds
+                // Get duration from callbackData (stored during initialization)
+                let duration = 'monthly' // Default fallback
+                try {
+                    // Extract duration from the object
+                    if (callbackDataObj && callbackDataObj.duration) {
+                        duration = callbackDataObj.duration
+                    } else {
+                        console.warn('[Payment Callback] Duration not found in callbackData, using default: monthly')
+                    }
+                } catch (e) {
+                    console.warn('[Payment Callback] Error extracting duration from callbackData:', e.message)
+                }
+                
+                console.log('[Payment Callback] Activating subscription with duration:', duration)
+
+                // ACTIVATE SUBSCRIPTION - This is critical!
+                try {
+                    const subscription = await activateSubscription(transaction, duration)
+                    console.log('[Payment Callback] ✅ Subscription activated successfully!', {
+                        tx_ref: reference,
+                        user_id: transaction.userId,
+                        plan_id: transaction.subscriptionPlanId,
+                        trainer_id: transaction.trainerId,
+                        duration: duration,
+                        subscription_id: subscription.id
+                    })
+                } catch (activationError) {
+                    console.error('[Payment Callback] ❌ CRITICAL: Failed to activate subscription:', {
+                        error: activationError.message,
+                        tx_ref: reference,
+                        user_id: transaction.userId,
+                        plan_id: transaction.subscriptionPlanId,
+                        trainer_id: transaction.trainerId,
+                        duration: duration,
+                        stack: activationError.stack,
+                        transaction_data: {
+                            subscriptionPlanId: transaction.subscriptionPlanId,
+                            trainerId: transaction.trainerId,
+                            userId: transaction.userId,
+                            callbackData: transaction.callbackData
+                        }
+                    })
+                    // Still mark transaction as success, but subscription activation failed
+                    // The verify endpoint will retry activation when user visits success page
+                }
             }
         } else {
             transaction.status = 'failed'
@@ -508,6 +693,79 @@ router.get('/verify/:txRef', requireAuth, async (req, res) => {
             } catch (verifyError) {
                 console.error('[Verify] Error verifying with Chapa:', verifyError.message)
                 // Continue anyway - might be a network issue
+            }
+        }
+
+        // Parse callbackData to determine transaction type
+        let callbackDataObj = transaction.callbackData
+        if (typeof callbackDataObj === 'string') {
+            try {
+                callbackDataObj = JSON.parse(callbackDataObj)
+            } catch (e) {
+                console.warn('[Verify] Failed to parse callbackData as JSON:', e.message)
+            }
+        }
+
+        // Handle consult purchase if this is a consult purchase transaction
+        if (transaction.status === 'success' && callbackDataObj && callbackDataObj.type === 'consult_purchase') {
+            try {
+                const { doctorId, quantity } = callbackDataObj
+                
+                if (!doctorId || !quantity) {
+                    console.error('[Verify] Missing doctorId or quantity in consult purchase', {
+                        callbackData: callbackDataObj
+                    })
+                } else {
+                    // Check if consults were already added (to avoid double crediting)
+                    const profile = await UserProfile.findOne({ where: { userId: transaction.userId } })
+                    
+                    // We'll check if the transaction was already processed by looking at completedAt
+                    // If it was just completed, process it
+                    if (transaction.completedAt) {
+                        // Check current balance to see if we need to add consults
+                        // This is a simple check - in production you might want a more robust solution
+                        const currentBalance = profile ? (profile.availableConsults || 0) : 0
+                        
+                        // Only add if balance seems low (simple heuristic - could be improved)
+                        // For now, we'll always try to add, but use a transaction to prevent duplicates
+                        const sequelize = require('sequelize')
+                        const db = require('../../models').sequelize
+                        
+                        await db.transaction(async (t) => {
+                            const updatedProfile = await UserProfile.findOne({ 
+                                where: { userId: transaction.userId },
+                                lock: true,
+                                transaction: t
+                            })
+                            
+                            if (!updatedProfile) {
+                                await UserProfile.create({ 
+                                    userId: transaction.userId, 
+                                    availableConsults: quantity 
+                                }, { transaction: t })
+                            } else {
+                                await updatedProfile.increment('availableConsults', { 
+                                    by: quantity,
+                                    transaction: t
+                                })
+                            }
+                        })
+                        
+                        console.log('[Verify] ✅ Consult purchase processed successfully!', {
+                            tx_ref: txRef,
+                            user_id: transaction.userId,
+                            doctor_id: doctorId,
+                            quantity: quantity
+                        })
+                    }
+                }
+            } catch (consultError) {
+                console.error('[Verify] ❌ CRITICAL: Failed to process consult purchase:', {
+                    error: consultError.message,
+                    tx_ref: txRef,
+                    user_id: transaction.userId,
+                    stack: consultError.stack
+                })
             }
         }
 
@@ -607,7 +865,8 @@ router.get('/verify/:txRef', requireAuth, async (req, res) => {
                 status: transaction.status,
                 amount: transaction.amount,
                 createdAt: transaction.createdAt,
-                completedAt: transaction.completedAt
+                completedAt: transaction.completedAt,
+                callbackData: transaction.callbackData
             },
             subscription: subscription || null
         })

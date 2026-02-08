@@ -1534,5 +1534,65 @@ router.delete('/intake-forms/:id', async (req, res) => {
   }
 })
 
+// ========== MEDICAL PROFESSIONAL SETTINGS ==========
+
+// PUT /api/v1/medical/settings/consult-fee - Update consult fee
+router.put('/settings/consult-fee', async (req, res) => {
+  try {
+    const userId = req.user?.id
+    if (!userId) {
+      return err(res, { code: 'UNAUTHORIZED', message: 'User not authenticated' }, 401)
+    }
+
+    const { consultFee } = req.body
+
+    // Validate consultFee
+    if (consultFee === undefined || consultFee === null) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'consultFee is required' }, 400)
+    }
+
+    const feeNumber = parseFloat(consultFee)
+    if (isNaN(feeNumber) || feeNumber < 0) {
+      return err(res, { code: 'VALIDATION_ERROR', message: 'consultFee must be a positive number' }, 400)
+    }
+
+    // Find or create medical professional record
+    let medicalPro = await MedicalProfessional.findOne({ where: { userId } })
+    
+    if (!medicalPro) {
+      return err(res, { code: 'NOT_FOUND', message: 'Medical professional record not found' }, 404)
+    }
+
+    // Update consult fee
+    await medicalPro.update({ consultFee: feeNumber })
+
+    ok(res, { consultFee: medicalPro.consultFee, message: 'Consult fee updated successfully' })
+  } catch (error) {
+    console.error('Error updating consult fee:', error)
+    err(res, error)
+  }
+})
+
+// GET /api/v1/medical/settings/consult-fee - Get current consult fee
+router.get('/settings/consult-fee', async (req, res) => {
+  try {
+    const userId = req.user?.id
+    if (!userId) {
+      return err(res, { code: 'UNAUTHORIZED', message: 'User not authenticated' }, 401)
+    }
+
+    const medicalPro = await MedicalProfessional.findOne({ where: { userId } })
+    
+    if (!medicalPro) {
+      return err(res, { code: 'NOT_FOUND', message: 'Medical professional record not found' }, 404)
+    }
+
+    ok(res, { consultFee: medicalPro.consultFee || null })
+  } catch (error) {
+    console.error('Error fetching consult fee:', error)
+    err(res, error)
+  }
+})
+
 module.exports = router
 

@@ -82,6 +82,11 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.JSON,
             allowNull: false,
             defaultValue: {}
+        },
+        availableConsults: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: 0
         }
     }, {
         tableName: 'user_profiles',
