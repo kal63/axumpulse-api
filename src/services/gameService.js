@@ -1,6 +1,6 @@
 'use strict';
 
-const { Game, WorkoutPlan } = require('../models');
+const { Game, WorkoutPlan, UserProfile } = require('../models');
 const { Op } = require('sequelize');
 const { 
     generateQuizWithGemini, 
@@ -357,11 +357,68 @@ function parseGeminiGameResponse(responseText, gameType) {
     }
 }
 
+/**
+ * Accrue daily spins for a user
+ * Adds 1 spin per day missed since last accrual date
+ * @param {number} userId - User ID
+ * @returns {Promise<number>} - Updated available spins count
+ */
+async function accrueDailySpins(userId) {
+    try {
+        // Get or create user profile
+        let profile = await UserProfile.findOne({ where: { userId } });
+        
+        if (!profile) {
+            // Create profile if it doesn't exist
+            profile = await UserProfile.create({
+                userId,
+                totalXp: 0,
+                challengesCompleted: 0,
+                workoutsCompleted: 0,
+                availableSpins: 1, // Give 1 spin on first creation
+                lastSpinAccrualDate: new Date().toISOString().split('T')[0] // Today's date
+            });
+            return profile.availableSpins;
+        }
+
+        // Get today's date in UTC (DATEONLY format: YYYY-MM-DD)
+        const today = new Date();
+        const todayUTC = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+        const todayDateStr = todayUTC.toISOString().split('T')[0];
+
+        // If lastSpinAccrualDate is null or before today, accrue spins
+        if (!profile.lastSpinAccrualDate || profile.lastSpinAccrualDate < todayDateStr) {
+            let daysMissed = 0;
+            
+            if (profile.lastSpinAccrualDate) {
+                // Calculate days missed
+                const lastDate = new Date(profile.lastSpinAccrualDate + 'T00:00:00Z');
+                const daysDiff = Math.floor((todayUTC - lastDate) / (1000 * 60 * 60 * 24));
+                daysMissed = Math.max(0, daysDiff); // Ensure non-negative
+            } else {
+                // First time - give 1 spin
+                daysMissed = 1;
+            }
+
+            // Add 1 spin per day missed (unlimited accumulation)
+            profile.availableSpins = (profile.availableSpins || 0) + daysMissed;
+            profile.lastSpinAccrualDate = todayDateStr;
+            await profile.save();
+        }
+
+        return profile.availableSpins;
+    } catch (error) {
+        console.error('Error accruing daily spins:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     spinAndWin,
     generateQuiz,
     generateMemoryGame,
     calculateGameScore,
-    parseGeminiGameResponse
+    parseGeminiGameResponse,
+    accrueDailySpins
 };
 

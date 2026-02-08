@@ -3,9 +3,9 @@
 const express = require('express');
 const router = express.Router();
 const { ok, err } = require('../../utils/errors');
-const { Game, UserGameProgress } = require('../../models');
+const { Game, UserGameProgress, UserProfile } = require('../../models');
 const { Op, literal } = require('sequelize');
-const { spinAndWin, generateQuiz, generateMemoryGame, calculateGameScore } = require('../../services/gameService');
+const { spinAndWin, generateQuiz, generateMemoryGame, calculateGameScore, accrueDailySpins } = require('../../services/gameService');
 const { awardGameXP } = require('../../services/xpService');
 const requireAuth = require('../../middleware/auth').requireAuth;
 
@@ -324,6 +324,57 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
+ * Get spin status for a game (spin_win only)
+ * Returns available spins count without consuming a spin
+ */
+router.get('/:id/spin-status', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const gameId = parseInt(req.params.id);
+        
+        // Validate gameId
+        if (isNaN(gameId) || gameId <= 0 || !Number.isInteger(gameId)) {
+            return err(res, { 
+                code: 'VALIDATION_ERROR', 
+                message: 'Invalid game ID' 
+            }, 400);
+        }
+
+        const game = await Game.findByPk(gameId);
+
+        if (!game) {
+            return err(res, { 
+                code: 'NOT_FOUND', 
+                message: 'Game not found' 
+            }, 404);
+        }
+
+        // Only for spin_win games
+        if (game.gameType !== 'spin_win') {
+            return err(res, { 
+                code: 'INVALID_GAME_TYPE', 
+                message: 'Spin status is only available for spin_win games' 
+            }, 400);
+        }
+
+        // Accrue daily spins to ensure they're up to date
+        const availableSpins = await accrueDailySpins(userId);
+        
+        // Get profile to get last accrual date
+        const profile = await UserProfile.findOne({ where: { userId } });
+
+        ok(res, {
+            availableSpins: availableSpins || 0,
+            canSpin: (availableSpins || 0) > 0,
+            lastAccrualDate: profile?.lastSpinAccrualDate || null
+        });
+    } catch (error) {
+        console.error('Error fetching spin status:', error);
+        err(res, error);
+    }
+});
+
+/**
  * Start/play a game
  * Returns game content based on game type
  */
@@ -361,6 +412,18 @@ router.post('/:id/play', async (req, res) => {
 
         switch (game.gameType) {
             case 'spin_win':
+                // Accrue daily spins first
+                await accrueDailySpins(userId);
+                
+                // Check if user has available spins
+                const profile = await UserProfile.findOne({ where: { userId } });
+                if (!profile || profile.availableSpins <= 0) {
+                    return err(res, {
+                        code: 'NO_SPINS_AVAILABLE',
+                        message: "You don't have any spins available. You'll get 1 spin tomorrow!"
+                    }, 400);
+                }
+                
                 // Get wheel workouts from request body if provided (backward compatible with wheelChallenges)
                 const wheelWorkouts = req.body.wheelWorkouts || req.body.wheelChallenges || null;
                 // Get recent selections from request body to avoid immediate repeats
@@ -371,6 +434,10 @@ router.post('/:id/play', async (req, res) => {
                     exercise,
                     challengeXp: exercise.xpReward // Pass workout plan XP for use in submit
                 };
+                
+                // Decrement available spins after successful spin
+                profile.availableSpins = Math.max(0, profile.availableSpins - 1);
+                await profile.save();
                 break;
 
             case 'quiz_battle':

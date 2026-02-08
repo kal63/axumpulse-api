@@ -37,6 +37,16 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: true,
             defaultValue: null
         },
+        availableSpins: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: 0
+        },
+        lastSpinAccrualDate: {
+            type: DataTypes.DATEONLY,
+            allowNull: true,
+            defaultValue: null
+        },
 
         // Subscription
         subscriptionTier: {
