@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { ok, err } = require('../utils/errors');
-const { Challenge, Trainer, User, TrainerApplication, CertificationFile } = require('../models');
+const { Challenge, Trainer, User, TrainerApplication, CertificationFile, TrainerSite } = require('../models');
 
 // Public root
 router.get('/', (req, res) => ok(res, { message: 'Public API root' }));
@@ -228,6 +228,14 @@ router.get('/trainers/:slug', async (req, res) => {
             order: [['createdAt', 'DESC']] // Get most recent application
         });
 
+        // Find trainer site (only if published)
+        const trainerSite = await TrainerSite.findOne({
+            where: { 
+                userId: userId,
+                status: 'published'
+            }
+        });
+
         // Format response
         const response = {
             userId: trainerData.userId,
@@ -254,6 +262,21 @@ router.get('/trainers/:slug', async (req, res) => {
                 socialMedia: application.socialMedia || {},
                 preferences: application.preferences || {},
                 certificationFiles: application.certificationFiles || []
+            } : null,
+            site: trainerSite ? {
+                slug: trainerSite.slug,
+                headline: trainerSite.headline,
+                subheadline: trainerSite.subheadline,
+                bio: trainerSite.bio,
+                philosophy: trainerSite.philosophy,
+                targetAudience: trainerSite.targetAudience,
+                heroBackgroundImage: trainerSite.heroBackgroundImage,
+                galleryImages: trainerSite.galleryImages || [],
+                theme: trainerSite.theme || {},
+                sections: trainerSite.sections || [],
+                trainerContent: trainerSite.trainerContent || [],
+                socialLinks: trainerSite.socialLinks || {},
+                ctaText: trainerSite.ctaText
             } : null
         };
 

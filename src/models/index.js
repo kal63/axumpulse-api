@@ -9,6 +9,7 @@ const User = require('./User')(sequelize, DataTypes)
 const UserProfile = require('./UserProfile')(sequelize, DataTypes)
 const Trainer = require('./Trainer')(sequelize, DataTypes)
 const TrainerApplication = require('./TrainerApplication')(sequelize, DataTypes)
+const TrainerSite = require('./TrainerSite')(sequelize, DataTypes)
 const CertificationFile = require('./CertificationFile')(sequelize, DataTypes)
 const SubscriptionAccess = require('./SubscriptionAccess')(sequelize, DataTypes)
 const Challenge = require('./Challenge')(sequelize, DataTypes)
@@ -56,6 +57,7 @@ const models = {
     UserProfile,
     Trainer,
     TrainerApplication,
+    TrainerSite,
     CertificationFile,
     SubscriptionAccess,
     Challenge,

@@ -15,6 +15,7 @@ router.use('/upload', require('./upload'))
 router.use('/workout-plans', require('./workout-plans'))
 router.use('/challenges', require('./challenges'))
 router.use('/settings', require('./settings'))
+router.use('/site', require('./site'))
 router.use('/', require('./profile')) // /me and future profile endpoints
 router.use('/', require('./stats'))   // /stats
 

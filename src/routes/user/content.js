@@ -63,28 +63,36 @@ router.get('/', optionalAuth, async (req, res) => {
         }
 
         // CRITICAL: Filter by subscribed trainer if user has active subscription
-        // This ensures users only see content from their subscribed trainer
+        // Medical professionals can see all content without subscription
+        // This ensures regular users only see content from their subscribed trainer
         if (userId) {
-            try {
-                const subscribedTrainerId = await getSubscribedTrainerId(userId)
-                console.log(`[Content] User ${userId} subscription check:`, {
-                    hasSubscription: !!subscribedTrainerId,
-                    trainerId: subscribedTrainerId
-                })
-                
-                if (subscribedTrainerId) {
-                    whereClause.trainerId = subscribedTrainerId
-                    console.log(`[Content] ✅ Filtering content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
-                } else {
-                    console.log(`[Content] ⚠️ User ${userId} has no active subscription - showing all public content`)
+            const isMedicalPro = req.user?.isMedical || false
+            
+            if (isMedicalPro) {
+                console.log(`[Content] ✅ Medical professional ${userId} - showing all public content`)
+                // Medical professionals see all content, no filtering needed
+            } else {
+                try {
+                    const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                    console.log(`[Content] User ${userId} subscription check:`, {
+                        hasSubscription: !!subscribedTrainerId,
+                        trainerId: subscribedTrainerId
+                    })
+                    
+                    if (subscribedTrainerId) {
+                        whereClause.trainerId = subscribedTrainerId
+                        console.log(`[Content] ✅ Filtering content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                    } else {
+                        console.log(`[Content] ⚠️ User ${userId} has no active subscription - showing all public content`)
+                    }
+                } catch (error) {
+                    console.error('[Content] ❌ Error checking subscription:', {
+                        error: error.message,
+                        stack: error.stack,
+                        userId: userId
+                    })
+                    // Continue without filtering on error - show all public content
                 }
-            } catch (error) {
-                console.error('[Content] ❌ Error checking subscription:', {
-                    error: error.message,
-                    stack: error.stack,
-                    userId: userId
-                })
-                // Continue without filtering on error - show all public content
             }
         } else {
             console.log('[Content] No userId provided (user not authenticated) - showing all public content')
@@ -197,15 +205,22 @@ router.get('/:id', optionalAuth, async (req, res) => {
         }
         
         // Filter related content by subscribed trainer if user has active subscription
+        // Medical professionals can see all related content without subscription
         if (userId) {
-            try {
-                const subscribedTrainerId = await getSubscribedTrainerId(userId)
-                if (subscribedTrainerId) {
-                    relatedContentWhere.trainerId = subscribedTrainerId
-                    console.log(`[Content] Filtering related content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+            const isMedicalPro = req.user?.isMedical || false
+            
+            if (!isMedicalPro) {
+                try {
+                    const subscribedTrainerId = await getSubscribedTrainerId(userId)
+                    if (subscribedTrainerId) {
+                        relatedContentWhere.trainerId = subscribedTrainerId
+                        console.log(`[Content] Filtering related content for user ${userId} by subscribed trainer ${subscribedTrainerId}`)
+                    }
+                } catch (error) {
+                    console.error('[Content] Error checking subscription for related content:', error)
                 }
-            } catch (error) {
-                console.error('[Content] Error checking subscription for related content:', error)
+            } else {
+                console.log(`[Content] Medical professional ${userId} - showing all related content`)
             }
         }
         
