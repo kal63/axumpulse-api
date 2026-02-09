@@ -220,9 +220,9 @@ res.status(404).json({ error: 'Not found' });
 - Only include password-related fields for display purposes (read-only)
 
 ### **File Upload Configuration**
-- **ALWAYS** set Express body parser limits: `express.json({ limit: '100mb' })`
+- **ALWAYS** set Express body parser limits: `express.json({ limit: '500mb' })`
 - **Profile images**: Use `fileSize: 10 * 1024 * 1024` (10MB) - reasonable for profile pics
-- **Content uploads**: Use `fileSize: 100 * 1024 * 1024` (100MB) - for videos and large files
+- **Content uploads**: Use `fileSize: 500 * 1024 * 1024` (500MB) - for videos and large files
 - **ALWAYS** validate file types and sizes on both frontend and backend
 - **ALWAYS** use proper error handling for file upload failures
 
