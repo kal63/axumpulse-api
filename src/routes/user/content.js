@@ -63,14 +63,15 @@ router.get('/', optionalAuth, async (req, res) => {
         }
 
         // CRITICAL: Filter by subscribed trainer if user has active subscription
-        // Medical professionals can see all content without subscription
+        // Medical professionals and trainers can see all content without subscription
         // This ensures regular users only see content from their subscribed trainer
         if (userId) {
             const isMedicalPro = req.user?.isMedical || false
+            const isTrainer = req.user?.isTrainer || false
             
-            if (isMedicalPro) {
-                console.log(`[Content] ✅ Medical professional ${userId} - showing all public content`)
-                // Medical professionals see all content, no filtering needed
+            if (isMedicalPro || isTrainer) {
+                console.log(`[Content] ✅ ${isMedicalPro ? 'Medical professional' : 'Trainer'} ${userId} - showing all public content`)
+                // Medical professionals and trainers see all content, no filtering needed
             } else {
                 try {
                     const subscribedTrainerId = await getSubscribedTrainerId(userId)
@@ -205,11 +206,12 @@ router.get('/:id', optionalAuth, async (req, res) => {
         }
         
         // Filter related content by subscribed trainer if user has active subscription
-        // Medical professionals can see all related content without subscription
+        // Medical professionals and trainers can see all related content without subscription
         if (userId) {
             const isMedicalPro = req.user?.isMedical || false
+            const isTrainer = req.user?.isTrainer || false
             
-            if (!isMedicalPro) {
+            if (!isMedicalPro && !isTrainer) {
                 try {
                     const subscribedTrainerId = await getSubscribedTrainerId(userId)
                     if (subscribedTrainerId) {
@@ -220,7 +222,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
                     console.error('[Content] Error checking subscription for related content:', error)
                 }
             } else {
-                console.log(`[Content] Medical professional ${userId} - showing all related content`)
+                console.log(`[Content] ${isMedicalPro ? 'Medical professional' : 'Trainer'} ${userId} - showing all related content`)
             }
         }
         

@@ -53,6 +53,10 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const trainerId = req.user?.id
+        if (!trainerId) {
+            return err(res, { code: 'UNAUTHORIZED', message: 'Trainer ID not found in request. Please ensure you are logged in as a trainer.' }, 401)
+        }
+        
         const payload = req.body || {}
         const { title, description, type, fileUrl, thumbnailUrl, duration, difficulty, category, language, tags, isPublic } = payload
 
@@ -132,12 +136,44 @@ router.get('/:id', async (req, res) => {
 })
 
 // PUT /trainer/content/:id
+// IMPORTANT: This route must be defined before any /site routes to prevent route conflicts
 router.put('/:id', async (req, res) => {
     try {
+        // Log the request to debug route matching
+        console.log('[Content Route] PUT /trainer/content/:id called', {
+            id: req.params.id,
+            url: req.url,
+            originalUrl: req.originalUrl,
+            path: req.path,
+            baseUrl: req.baseUrl,
+            route: '/trainer/content/:id',
+            method: req.method
+        })
+        
+        // Safety check: Ensure we're handling the correct route
+        if (req.originalUrl && req.originalUrl.includes('/trainer/site/')) {
+            console.error('[Content Route] ERROR: This route should not handle /trainer/site requests!', {
+                originalUrl: req.originalUrl,
+                url: req.url
+            })
+            return err(res, { 
+                code: 'ROUTE_MISMATCH', 
+                message: 'This endpoint is for regular content, not trainer site content.' 
+            }, 400)
+        }
+        
         const trainerId = req.user?.id
+        if (!trainerId) {
+            return err(res, { code: 'UNAUTHORIZED', message: 'Trainer ID not found in request' }, 401)
+        }
+        
         const content = await Content.findByPk(req.params.id)
-        if (!content || content.trainerId !== trainerId) {
-            return err(res, { code: 'NOT_FOUND', message: 'Content not found' }, 404)
+        if (!content) {
+            return err(res, { code: 'NOT_FOUND', message: `Content with ID ${req.params.id} not found` }, 404)
+        }
+        
+        if (content.trainerId !== trainerId) {
+            return err(res, { code: 'FORBIDDEN', message: 'You do not have permission to update this content' }, 403)
         }
 
         // Validate type if it's being updated

@@ -402,8 +402,31 @@ router.post('/trainer-content', async (req, res) => {
 })
 
 // PUT /trainer/site/trainer-content/:id - Update trainer content item
+// IMPORTANT: This route should NOT match /trainer/content/:id requests
 router.put('/trainer-content/:id', async (req, res) => {
     try {
+        // Log to debug route matching issues
+        console.log('[Site Route] PUT /trainer/site/trainer-content/:id called', {
+            id: req.params.id,
+            url: req.url,
+            originalUrl: req.originalUrl,
+            path: req.path,
+            baseUrl: req.baseUrl,
+            route: '/trainer/site/trainer-content/:id'
+        })
+        
+        // Safety check: If this route is being called for /trainer/content/:id, that's wrong!
+        if (req.originalUrl && req.originalUrl.includes('/trainer/content/') && !req.originalUrl.includes('/trainer/site/')) {
+            console.error('[Site Route] ERROR: This route should not handle /trainer/content/:id requests!', {
+                originalUrl: req.originalUrl,
+                url: req.url
+            })
+            return err(res, { 
+                code: 'ROUTE_MISMATCH', 
+                message: 'This endpoint is for trainer site content, not regular content. Use /trainer/content/:id instead.' 
+            }, 400)
+        }
+        
         const userId = req.user?.id
         const { id } = req.params
         const { title, description, url, type, order } = req.body

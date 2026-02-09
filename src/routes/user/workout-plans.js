@@ -57,14 +57,15 @@ router.get('/', optionalAuth, async (req, res) => {
         }
 
         // CRITICAL: Filter by subscribed trainer if user has active subscription
-        // Medical professionals can see all workout plans without subscription
+        // Medical professionals and trainers can see all workout plans without subscription
         // This ensures regular users only see workouts from their subscribed trainer
         if (userId) {
             const isMedicalPro = req.user?.isMedical || false
+            const isTrainer = req.user?.isTrainer || false
             
-            if (isMedicalPro) {
-                console.log(`[Workout Plans] ✅ Medical professional ${userId} - showing all public workout plans`)
-                // Medical professionals see all workout plans, no filtering needed
+            if (isMedicalPro || isTrainer) {
+                console.log(`[Workout Plans] ✅ ${isMedicalPro ? 'Medical professional' : 'Trainer'} ${userId} - showing all public workout plans`)
+                // Medical professionals and trainers see all workout plans, no filtering needed
             } else {
                 try {
                     const subscribedTrainerId = await getSubscribedTrainerId(userId)
@@ -201,11 +202,12 @@ router.get('/:id', optionalAuth, async (req, res) => {
         }
 
         // Filter related plans by subscribed trainer if user has active subscription
-        // Medical professionals can see all related plans without subscription
+        // Medical professionals and trainers can see all related plans without subscription
         if (userId) {
             const isMedicalPro = req.user?.isMedical || false
+            const isTrainer = req.user?.isTrainer || false
             
-            if (!isMedicalPro) {
+            if (!isMedicalPro && !isTrainer) {
                 try {
                     const subscribedTrainerId = await getSubscribedTrainerId(userId)
                     if (subscribedTrainerId) {
@@ -216,7 +218,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
                     console.error('[Workout Plans] Error checking subscription for related plans:', error)
                 }
             } else {
-                console.log(`[Workout Plans] Medical professional ${userId} - showing all related plans`)
+                console.log(`[Workout Plans] ${isMedicalPro ? 'Medical professional' : 'Trainer'} ${userId} - showing all related plans`)
             }
         }
 

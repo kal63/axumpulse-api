@@ -287,4 +287,19 @@ router.get('/trainers/:slug', async (req, res) => {
     }
 });
 
+// GET /public/languages - Get all active languages
+router.get('/languages', async (req, res) => {
+    try {
+        const { Language } = require('../models');
+        const languages = await Language.findAll({
+            where: { isActive: true },
+            order: [['name', 'ASC']]
+        });
+        ok(res, languages);
+    } catch (error) {
+        console.error('Error fetching languages:', error);
+        err(res, error);
+    }
+});
+
 module.exports = router;
