@@ -47,7 +47,7 @@ router.post('/workout-plan/start', async (req, res) => {
 
         // If gameId is provided, verify the game exists
         if (gameId) {
-            const { Game } = require('../models')
+            const { Game } = require('../../models')
             const game = await Game.findByPk(gameId)
             if (!game) {
                 return err(res, { code: 'NOT_FOUND', message: 'Game not found' }, 404)
@@ -86,7 +86,7 @@ router.post('/workout-plan/start', async (req, res) => {
         const firstExercise = workoutPlan.exercises?.[0]
         let firstExerciseProgress = null
         if (firstExercise) {
-            const { UserExerciseProgress } = require('../models')
+            const { UserExerciseProgress } = require('../../models')
             const [exerciseProgress] = await UserExerciseProgress.findOrCreate({
                 where: {
                     userId,
@@ -199,7 +199,7 @@ router.post('/exercise/complete', async (req, res) => {
                 planProgress.xpEarned = baseXP
                 
                 // Award XP to user
-                const { awardXP } = require('../services/xpService')
+                const { awardXP } = require('../../services/xpService')
                 try {
                     await awardXP(
                         userId,
