@@ -26,6 +26,7 @@ const UserAchievement = require('./UserAchievement')(sequelize, DataTypes)
 const Game = require('./Game')(sequelize, DataTypes)
 const UserGameProgress = require('./UserGameProgress')(sequelize, DataTypes)
 const DailyChallengeProgress = require('./DailyChallengeProgress')(sequelize, DataTypes)
+const Subscription = require('./Subscription')(sequelize, DataTypes)
 
 // Medical layer (new)
 const MedicalProfessionalApplication = require('./MedicalProfessionalApplication')(sequelize, DataTypes)
@@ -97,7 +98,8 @@ const models = {
     WorkoutPlanInsight,
     SubscriptionPlan,
     UserSubscription,
-    PaymentTransaction
+    PaymentTransaction,
+    Subscription
 }
 
 // Associations
