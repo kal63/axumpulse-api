@@ -171,7 +171,7 @@ router.post('/exercise/complete', async (req, res) => {
         })
 
         if (planProgress) {
-            // Count completed exercises
+            // Count completed exercises for this plan
             const completedCount = await UserExerciseProgress.count({
                 where: {
                     userId,
@@ -180,16 +180,39 @@ router.post('/exercise/complete', async (req, res) => {
                 }
             })
 
+            // Always keep totalExercises in sync with the current workout definition
+            // This fixes cases where a plan was edited (exercises added/removed)
+            // after the user started it, which could leave totalExercises out of sync
+            let effectiveTotalExercises = planProgress.totalExercises || 0
+            try {
+                const actualExerciseCount = await WorkoutExercise.count({
+                    where: { workoutPlanId }
+                })
+
+                // If there are defined exercises for this plan, trust that count
+                if (actualExerciseCount > 0) {
+                    effectiveTotalExercises = actualExerciseCount
+                    planProgress.totalExercises = actualExerciseCount
+                }
+            } catch (countError) {
+                console.error('Error counting workout exercises for progress update:', {
+                    error: countError.message,
+                    workoutPlanId,
+                    userId
+                })
+                // Fallback: keep using the stored totalExercises value
+            }
+
             planProgress.completedExercises = completedCount
             planProgress.lastAccessedAt = new Date()
 
-            // Check if plan is completed
-            if (completedCount >= planProgress.totalExercises) {
+            // Check if plan is completed based on the up-to-date exercise count
+            if (effectiveTotalExercises > 0 && completedCount >= effectiveTotalExercises) {
                 planProgress.status = 'completed'
                 planProgress.completedAt = new Date()
                 
                 // Calculate base XP: (totalExercises * 25) + 100 bonus
-                let baseXP = planProgress.totalExercises * 25 + 100
+                let baseXP = effectiveTotalExercises * 25 + 100
                 
                 // Add 50 XP bonus if this workout plan was won from a game
                 if (planProgress.fromGameId) {
