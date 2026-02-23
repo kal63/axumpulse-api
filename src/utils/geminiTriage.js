@@ -13,7 +13,7 @@ function initializeGemini() {
     console.warn('GEMINI_API_KEY not set. Gemini triage will use fallback mode.')
     return false
   }
-
+ 
   try {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
     // Don't initialize a model here - we'll discover and use available models dynamically
