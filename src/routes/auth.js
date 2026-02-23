@@ -61,6 +61,82 @@ router.post('/login', async (req, res) => {
     }
 })
 
+// POST /auth/dev-login - Dev login without validation (for testing purposes only, checks env.NODE_ENV === 'development')
+router.post('/dev_login', async (req, res) => {
+    console.log('Dev login attempt with body:', req.body)
+
+    if (process.env.ENABLE_DEV_LOGIN !== 'true'
+    ) {
+        console.warn('Attempted dev login in non-development environment')
+        return err(res, { code: 'FORBIDDEN', message: 'Dev login is only allowed in development environment' }, 403)
+    }
+
+    try {
+        const { role } = req.body || {}
+        console.log('Dev login role:', role)
+        if (!role) {
+            return err(res, { code: 'BAD_REQUEST', message: 'role is required' }, 400)
+        }
+
+        const creds = {}
+
+        if(role === 'admin') {
+            creds['phone'] = process.env.DEV_ADMIN_PHONE
+            creds['password'] = process.env.DEV_ADMIN_PASSWORD
+        }else if(role === 'trainer') {
+            creds['phone'] = process.env.DEV_TRAINER_PHONE
+            creds['password'] = process.env.DEV_TRAINER_PASSWORD
+        }else if(role === 'user') {
+            creds['phone'] = process.env.DEV_USER_PHONE
+            creds['password'] = process.env.DEV_USER_PASSWORD
+        }else if(role === 'medical') {
+            creds['phone'] = process.env.DEV_MEDICAL_PHONE
+            creds['password'] = process.env.DEV_MEDICAL_PASSWORD
+        }else {
+            return err(res, { code: 'BAD_REQUEST', message: 'Invalid role. Must be one of: admin, trainer, user, medical' }, 400)
+        }
+
+        console.log('Dev login credentials:', creds)
+        const { phone, password } = creds
+
+        const user = await User.findOne({ where: { phone: phone } })
+        if (!user || !user.passwordHash) {
+            return err(res, { code: 'INVALID_CREDENTIALS', message: 'Invalid phone or password' }, 401)
+        }
+
+        const okPw = await bcrypt.compare(password, user.passwordHash)
+        if (!okPw) {
+            return err(res, { code: 'INVALID_CREDENTIALS', message: 'Invalid phone or password' }, 401)
+        }
+
+        const token = jwt.sign({ id: user.id, isAdmin: user.isAdmin, isTrainer: user.isTrainer }, process.env.JWT_SECRET, { expiresIn: '365d' })
+        user.lastLoginAt = new Date()
+        await user.save()
+
+        return ok(res, {
+            token,
+            user: {
+                id: user.id,
+                phone: user.phone,
+                email: user.email,
+                name: user.name,
+                profilePicture: user.profilePicture,
+                dateOfBirth: user.dateOfBirth,
+                gender: user.gender,
+                isAdmin: user.isAdmin,
+                isTrainer: user.isTrainer,
+                status: user.status,
+                lastLoginAt: user.lastLoginAt,
+                lastActiveAt: user.lastActiveAt,
+                createdAt: user.createdAt,
+                updatedAt: user.updatedAt
+            }
+        })
+    } catch (e) {
+        return err(res, { code: 'LOGIN_FAILED', message: 'Failed to login' }, 500)
+    }
+})
+
 // POST /auth/register - Register new user
 router.post('/register', async (req, res) => {
     try {
