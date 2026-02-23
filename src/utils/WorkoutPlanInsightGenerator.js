@@ -1,6 +1,6 @@
 'use strict'
 
-const { callGeminiWithRetry } = require('./geminiTriage')
+const { callGeminiWithRetry } = require('./GeminiTriage')
 const {
   WorkoutPlan,
   WorkoutExercise,
