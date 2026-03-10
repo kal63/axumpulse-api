@@ -1,0 +1,511 @@
+# AxumPulse Changelog
+
+All notable changes to the AxumPulse platform (frontend and API) are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.0.0] - 2026-03-10
+
+---
+
+# FRONTEND (axumpulse)
+
+## 🎨 **UI/UX Enhancements**
+
+### Added
+- **Hero Section Improvements**:
+  - Hero-style headers for daily challenges, games & leaderboard pages
+  - Dynamic language selector dropdown in header
+  - Enhanced mobile BottomNavigation with internationalization support
+  - Updated subscription pricing display (4 ETB minimum)
+
+- **Trainer Portfolio System**:
+  - Complete trainer portfolio site customization UI
+  - Trainer profile pages with customizable layouts
+  - Specialties display with proper array validation
+  - Bio and contact information sections
+
+- **Medical System Frontend**:
+  - Medical application status page with real-time updates
+  - Enhanced MedicalApplyPage with language fetching and validation
+  - Improved MedicalHubPage with better error handling and button states
+  - Doctor consultation booking interface
+
+- **Subscription Management**:
+  - Subscription checks and indicators across all user pages
+  - Package-first subscription flow with discount display
+  - Payment success page with loading states and Suspense
+  - Subscription status indicators in navigation
+
+- **Gaming Features**:
+  - Spin availability display and validation for spin & win game
+  - Game challenge integration with workout plans
+  - Real-time game state management
+
+- **Admin Interface**:
+  - SettingsPage component for admin users
+  - Trainer applications management interface
+  - User role management and permissions
+  - System configuration panels
+
+- **Internationalization (i18n)**:
+  - Full i18n support with multiple locales
+  - Sidebar navigation with language switching
+  - Message translation system
+  - Locale-aware date and number formatting
+
+- **Upload System**:
+  - Upload progress tracking with visual indicators
+  - Success toast notifications for completed uploads
+  - File validation and error handling
+  - Thumbnail generation for video content
+
+### Fixed
+- **Critical Bug Fixes**:
+  - Fixed TypeError in trainer specialties display by adding Array.isArray() checks
+  - Prevented crashes when API returns non-array data for specialties
+  - Fixed JSX structure in trainer detail pages
+  - Resolved build time errors in checkout components
+
+- **UI/UX Fixes**:
+  - Fixed alignment issues in HeroSection language dropdown
+  - Corrected mobile navigation spacing and responsiveness
+  - Fixed trainer routing issues on page refresh
+  - Improved error handling in payment flows
+
+- **Data Handling**:
+  - Enhanced data validation for trainer profiles
+  - Fixed specialty array handling across all components
+  - Improved error states for failed API calls
+  - Better loading states for async operations
+
+---
+
+## 🔧 **Technical Improvements (Frontend)**
+
+### Added
+- **Authentication Flow**:
+  - Dev quick-login buttons for development
+  - Role-based login flow with proper redirects
+  - Secure token management and storage
+  - Authentication state persistence
+
+- **Component Architecture**:
+  - Lazy loading for performance optimization
+  - Suspense boundaries for better UX
+  - Error boundaries for crash prevention
+  - Reusable UI components library
+
+- **State Management**:
+  - Enhanced auth context with better error handling
+  - Improved user state management
+  - Real-time subscription status updates
+
+- **Real-time Communication**:
+  - WebRTC-based video calling for medical consultations
+  - VoIP audio communication
+  - Screen sharing capabilities
+  - Call recording and archiving
+  - Video quality optimization
+  - Connection stability improvements
+
+- **Gamification System**:
+  - Daily challenges and rewards
+  - Spin & Win game mechanics
+  - XP and level progression
+  - Achievement badges and unlocks
+  - Leaderboards and social competition
+  - Progress tracking and milestones
+  - Motivational notifications and streaks
+
+### Fixed
+- **Build & Dependencies**:
+  - Updated Next.js to version ^15.5.12
+  - Fixed module import issues
+  - Resolved TypeScript compilation errors
+  - Updated package dependencies
+
+- **Configuration**:
+  - Updated environment variables for production
+  - Fixed API URL configurations
+  - Corrected image domain settings
+  - Updated server port configurations
+
+- **Performance**:
+  - Optimized component re-renders
+  - Improved loading states
+  - Better error recovery mechanisms
+
+---
+
+## 📱 **Mobile & Responsive (Frontend)**
+
+### Added
+- Enhanced mobile navigation with i18n support
+- Responsive trainer profile layouts
+- Mobile-optimized subscription flows
+- Touch-friendly gaming interfaces
+
+### Fixed
+- Mobile navigation alignment issues
+- Responsive layout problems on small screens
+- Touch event handling improvements
+
+---
+
+## 🌐 **Internationalization (Frontend)**
+
+### Added
+- Complete i18n implementation with next-intl
+- Multiple language support (English, Amharic, Oromifa, Tigrigna)
+- Locale-aware components and messages
+- Language preference persistence
+
+### Fixed
+- Removed conflicting i18n configurations
+- Fixed App Router compatibility issues
+- Improved language switching UX
+
+---
+
+## 🎯 **User Experience (Frontend)**
+
+### Added
+- **Onboarding & Navigation**:
+  - User redirection based on role after login
+  - Improved first-time user experience
+  - Better navigation flow between sections
+
+- **Feedback & Notifications**:
+  - Toast notifications for actions
+  - Progress indicators for uploads
+  - Success/error state feedback
+  - Loading states with meaningful messages
+
+- **Preferences**:
+  - Preferences tab in TrainerSettingsPage
+  - Language and theme selection
+  - User preference persistence
+
+### Fixed
+- Improved error messages and user guidance
+- Better loading states and progress feedback
+- Enhanced accessibility features
+
+---
+
+## 🔒 **Security & Privacy (Frontend)**
+
+### Fixed
+- Improved token handling and storage
+- Better authentication state management
+- Enhanced error handling for sensitive operations
+
+---
+
+## 📊 **Analytics & Monitoring (Frontend)**
+
+### Added
+- Error tracking and reporting
+- Performance monitoring hooks
+- User interaction analytics foundation
+
+---
+
+# API (axumpulse-api)
+
+## 🚀 **Core Features (API)**
+
+### Added
+- **Authentication System**:
+  - Secure dev quick-login endpoint for development
+  - Enhanced JWT token management
+  - Role-based access control (RBAC)
+  - Secure password hashing and validation
+
+- **Trainer Portfolio API**:
+  - Trainer profile customization endpoints
+  - Portfolio data management
+  - Public trainer profile access
+  - Trainer settings and preferences API
+
+- **Medical System API**:
+  - Medical professional registration and verification
+  - Consultation booking and payment system
+  - Medical application status tracking
+  - Doctor-patient communication endpoints
+  - Medical document upload and management
+
+- **Subscription & Payment System**:
+  - Complete subscription lifecycle management
+  - Chapa payment integration with webhooks
+  - Payment verification and status tracking
+  - Subscription plan management
+  - Auto-activation on successful payment
+  - Discount calculation and application
+
+- **Gaming & Challenges API**:
+  - Spin & win game system with unlimited accumulation
+  - Challenge filtering and selection logic
+  - Game challenge migration from challenges to workout plans
+  - Wheel challenge support with recent selections tracking
+  - Game state management and validation
+
+- **Content Management**:
+  - Enhanced content upload with 500MB limit (upgraded from 100MB)
+  - Video thumbnail generation
+  - Content categorization and tagging
+  - Trainer-specific content filtering
+  - Upload progress tracking endpoints
+
+- **Email System**:
+  - Email subscription management
+  - Newsletter signup and management
+  - Email notification system foundation
+
+### Enhanced
+- **User Management**:
+  - Enhanced user dashboard with real data
+  - User role management and permissions
+  - Profile completion tracking
+  - User preferences and settings
+
+- **Workout & Progress Tracking**:
+  - Enhanced workout plan completion logic
+  - XP awarding system for completed plans
+  - Progress synchronization fixes
+  - Exercise completion validation
+
+---
+
+## 🔧 **Technical Improvements (API)**
+
+### Added
+- **Database & ORM**:
+  - MariaDB dialect configuration fixes
+  - JSON data handling improvements
+  - Database connection optimization
+  - Migration system enhancements
+
+- **API Architecture**:
+  - RESTful endpoint design
+  - Proper HTTP status codes
+  - Request validation and sanitization
+  - Error handling and logging
+
+- **Security**:
+  - Input validation and sanitization
+  - SQL injection prevention
+  - CORS configuration
+  - Rate limiting foundation
+
+### Fixed
+- **Database Issues**:
+  - Fixed MariaDB configuration and JSON handling
+  - Resolved case sensitivity issues on Linode environment
+  - Database connection stability improvements
+
+- **API Endpoints**:
+  - Fixed content upload endpoint routing
+  - Corrected language loading in trainer endpoints
+  - Fixed trainee progress loading errors
+  - Resolved missing imports in progress tracking
+
+- **Payment System**:
+  - Enhanced payment initialization with phone and email validation
+  - Improved payment verification process
+  - Fixed subscription auto-activation logic
+
+- **Workout Logic**:
+  - Fixed exercise completion when plan exercises change
+  - Improved XP calculation and awarding
+  - Enhanced progress synchronization
+
+### Refactored
+- **Code Quality**:
+  - Removed unused Sequelize operators
+  - Simplified challenge filtering logic
+  - Cleaned up TypeScript annotations in JavaScript files
+  - Improved code organization and modularity
+
+- **Game Logic**:
+  - Migrated spin & win from challenges to workout plans
+  - Enhanced game challenge selection algorithm
+  - Removed fallback logic for better reliability
+
+---
+
+## 📊 **Data & Analytics (API)**
+
+### Added
+- **User Analytics**:
+  - User engagement tracking foundation
+  - Subscription analytics
+  - Content consumption metrics
+
+- **Performance Monitoring**:
+  - API response time tracking
+  - Error rate monitoring
+  - Database query performance
+
+### Enhanced
+- **Data Validation**:
+  - Improved input validation across all endpoints
+  - Better error messages and status codes
+  - Data sanitization and type checking
+
+---
+
+## 🔒 **Security & Compliance (API)**
+
+### Added
+- **Authentication Security**:
+  - Enhanced token validation
+  - Secure password policies
+  - Session management improvements
+
+- **Data Protection**:
+  - Input sanitization
+  - SQL injection prevention
+  - XSS protection measures
+
+### Fixed
+- **Security Vulnerabilities**:
+  - Fixed potential security issues in payment endpoints
+  - Improved data validation
+  - Enhanced error handling to prevent information leakage
+
+---
+
+## 📈 **Performance & Scalability (API)**
+
+### Added
+- **Caching Layer**: Foundation for Redis caching implementation
+- **Database Optimization**: Query optimization and indexing
+- **API Rate Limiting**: Basic rate limiting for API endpoints
+
+### Fixed
+- **Performance Issues**:
+  - Optimized database queries
+  - Improved response times for heavy operations
+  - Better memory management
+
+---
+
+## 🧪 **Testing & Quality Assurance (API)**
+
+### Added
+- **API Testing**: Enhanced test coverage for critical endpoints
+- **Integration Tests**: Payment flow testing
+- **Error Scenario Testing**: Comprehensive error handling tests
+
+### Fixed
+- **Test Stability**: Fixed flaky tests and improved reliability
+- **Coverage**: Increased test coverage for new features
+
+---
+
+## [0.1.0] - 2026-02-08
+
+### Frontend
+- Initial Next.js frontend application
+- Basic authentication and user management
+- Trainer profile display components
+- Content upload interface
+- Subscription management UI
+- Medical consultation booking
+- Mobile-responsive design foundation
+- Basic internationalization setup
+
+### API
+- Initial Node.js/Express API server
+- Basic user authentication and registration
+- Trainer profile management
+- Content upload endpoints
+- Basic subscription system
+- Medical consultation booking
+- Database models and relationships
+- Basic API documentation foundation
+
+---
+
+# Versioning Guidelines
+
+## Frontend
+- **MAJOR**: Breaking UI changes, complete redesigns, API contract changes
+- **MINOR**: New features, significant UI improvements, new components
+- **PATCH**: Bug fixes, small UI tweaks, performance improvements
+
+## API
+- **MAJOR**: Breaking API changes, database schema changes, authentication changes
+- **MINOR**: New endpoints, enhanced features, backward-compatible changes
+- **PATCH**: Bug fixes, performance improvements, security patches
+
+---
+
+# API Endpoints Overview
+
+### Authentication
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/register` - User registration
+- `GET /api/v1/auth/me` - Get current user
+- `POST /api/v1/auth/dev-login` - Development login
+
+### Users
+- `GET /api/v1/users` - List users (admin)
+- `GET /api/v1/users/:id` - Get user details
+- `PUT /api/v1/users/:id` - Update user
+- `DELETE /api/v1/users/:id` - Delete user
+
+### Trainers
+- `GET /api/v1/trainers` - List trainers
+- `GET /api/v1/trainers/:id` - Get trainer details
+- `PUT /api/v1/trainers/:id` - Update trainer profile
+- `POST /api/v1/trainers/content` - Upload content
+
+### Medical
+- `GET /api/v1/medical/doctors` - List doctors
+- `POST /api/v1/medical/consult` - Book consultation
+- `GET /api/v1/medical/applications` - Medical applications
+
+### Subscriptions
+- `GET /api/v1/subscriptions/plans` - Get plans
+- `POST /api/v1/subscriptions` - Create subscription
+- `POST /api/v1/payments/initiate` - Initiate payment
+
+### Content
+- `GET /api/v1/content` - List content
+- `POST /api/v1/content` - Upload content
+- `GET /api/v1/content/:id` - Get content details
+
+---
+
+# Future Releases
+
+## [1.1.0] - Planned Features
+- **Frontend**: Advanced dashboard analytics, push notification system, offline content support, enhanced mobile app features, advanced customization options
+- **API**: Advanced analytics API, push notification service, real-time chat system, advanced reporting endpoints, API rate limiting and throttling
+
+## [1.0.1] - Planned Patches
+- **Frontend**: Performance optimizations, accessibility improvements, additional language support, UI polish and refinements
+- **API**: Performance optimizations, security enhancements, database query optimizations, error handling improvements
+
+---
+
+# Development Notes
+
+## Frontend (axumpulse)
+- All frontend changes are tracked in the `axumpulse` directory
+- Components follow React best practices with TypeScript
+- UI components use Tailwind CSS for styling
+- State management through React Context and hooks
+
+## API (axumpulse-api)
+- All API changes are tracked in the `axumpulse-api` directory
+- Uses Express.js with Sequelize ORM
+- MariaDB database with proper migrations
+- JWT authentication with role-based permissions
+- Comprehensive error handling and logging
