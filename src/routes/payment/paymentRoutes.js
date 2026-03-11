@@ -10,6 +10,34 @@ const { Op } = require('sequelize')
 const { activateSubscription } = require('../../services/subscriptionService')
 
 /**
+ * Ensure a URL is absolute and has a protocol so that
+ * external services like payment gateways accept it.
+ *
+ * - If value already has http/https, keep it.
+ * - If it's localhost or 127.0.0.1, default to http (no SSL in dev).
+ * - Otherwise default to https.
+ */
+function ensureAbsoluteUrl(url, fallback) {
+    if (!url && fallback) return fallback
+    if (!url) return ''
+
+    let normalized = url.trim()
+
+    // If it already has a protocol, just return it
+    if (/^https?:\/\//i.test(normalized)) {
+        return normalized
+    }
+
+    // Local dev hosts: use http
+    if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(normalized)) {
+        return `http://${normalized}`
+    }
+
+    // Default to https for anything else
+    return `https://${normalized}`
+}
+
+/**
  * Get price based on duration
  */
 function getPriceForDuration(plan, duration) {
@@ -145,11 +173,14 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
         const firstName = nameParts[0] || user.name || 'User'
         const lastName = nameParts[1] || ''
 
-        // Construct URLs from environment variables
-        const frontendUrl = process.env.FRONTEND_URL || 
+        // Construct URLs from environment variables and ensure they are valid absolute URLs
+        const rawFrontendUrl = process.env.FRONTEND_URL || 
             (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '') : 'http://localhost:3001')
-        const backendUrl = process.env.BACKEND_URL || 
+        const rawBackendUrl = process.env.BACKEND_URL || 
             `http://localhost:${process.env.PORT || 3000}`
+
+        const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
+        const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3000}`)
 
         // Validate and format email for Chapa
         // Chapa requires a valid email format and rejects test domains
@@ -326,7 +357,9 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
         // Check if it's a 400 Bad Request from Chapa (often indicates validation error)
         const isChapaValidationError = error.response?.status === 400
         
-        if (isEmailError || (isChapaValidationError && req.body?.email)) {
+        // Only return a specific email validation message when we are confident
+        // the gateway error is actually about the email, instead of any generic 400.
+        if (isEmailError) {
             return err(res, {
                 code: 'VALIDATION_ERROR',
                 message: 'The payment gateway does not accept this email address. Please use a valid email address (e.g., Gmail, Yahoo, Outlook, or your company email).',
@@ -403,12 +436,15 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
         // Generate unique transaction reference
         const txRef = `CONSULT-${user.id}-${doctorId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 
-        // Construct URLs from environment variables (same as subscription payment)
-        const frontendUrl = process.env.FRONTEND_URL || 
+        // Construct URLs from environment variables (same as subscription payment) and normalize
+        const rawFrontendUrl = process.env.FRONTEND_URL || 
             (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '') : 'http://localhost:3001')
-        const backendUrl = process.env.API_BASE_URL || 
+        const rawBackendUrl = process.env.API_BASE_URL || 
             process.env.BACKEND_URL || 
             `http://localhost:${process.env.PORT || 3001}`
+
+        const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
+        const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3001}`)
 
         // Validate and sanitize email (similar to subscription payment)
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -644,7 +680,8 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
         const isEmailError = error.response?.data?.message?.email || 
                             (chapaErrorMessage && typeof chapaErrorMessage === 'object' && chapaErrorMessage.email)
         
-        if (isEmailError || (isChapaValidationError && req.body?.email)) {
+        // Only show the email-specific error when the gateway clearly points to email
+        if (isEmailError) {
             return err(res, {
                 code: 'VALIDATION_ERROR',
                 message: 'The payment gateway does not accept this email address. Please use a valid email address (e.g., Gmail, Yahoo, Outlook, or your company email).',
