@@ -204,13 +204,20 @@ router.get('/stats', async (req, res) => {
             workoutPlansStarted: await UserWorkoutPlanProgress.count({
                 where: { userId }
             }),
-            workoutPlansCompleted: user.profile?.workoutsCompleted || 0,
+            // Compute from progress rows (don't rely on cached counter),
+            // so completed plans are always reflected.
+            workoutPlansCompleted: await UserWorkoutPlanProgress.count({
+                where: { userId, status: 'completed' }
+            }),
 
             // Challenge stats
             challengesJoined: await UserChallengeProgress.count({
                 where: { userId }
             }),
-            challengesCompleted: user.profile?.challengesCompleted || 0,
+            // Compute from progress rows (don't rely on cached counter)
+            challengesCompleted: await UserChallengeProgress.count({
+                where: { userId, status: 'completed' }
+            }),
 
             // Achievement stats
             achievementsUnlocked: await UserAchievement.count({
