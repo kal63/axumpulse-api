@@ -6,6 +6,11 @@ const { ok, err } = require('../../utils/errors')
 const { getPagination, executePaginatedQuery } = require('../../utils/pagination')
 const { Challenge, Trainer, User, UserChallengeProgress } = require('../../models')
 const { Op } = require('sequelize')
+const { optionalAuth } = require('../../middleware/auth')
+
+// Allow optional authentication so we can include `userProgress` when the
+// client sends a token (needed for correct join/completed UI).
+router.use(optionalAuth)
 
 // GET /user/challenges - Get all approved, public challenges
 router.get('/', async (req, res) => {

@@ -18,6 +18,62 @@ const { Op } = require('sequelize')
 // All progress routes require authentication
 router.use(requireAuth)
 
+function safeJsonParse(value) {
+    if (!value) return {}
+    if (typeof value === 'object') return value
+    if (typeof value !== 'string') return {}
+    try {
+        return JSON.parse(value)
+    } catch {
+        return {}
+    }
+}
+
+/**
+ * Derive goal value and (optional) time gate from a challenge.
+ * - If `requirements` contains something like "180 seconds"/"3 minutes", we treat the goal as that time in seconds.
+ * - Otherwise we fall back to numeric values in `ruleJson`.
+ */
+function deriveChallengeGoal(challenge) {
+    const ruleJson = safeJsonParse(challenge.ruleJson)
+
+    // Prefer explicit goal-like values from ruleJson
+    const ruleValue =
+        (ruleJson && (ruleJson.amount ?? ruleJson.targetValue ?? ruleJson.target)) ?? null
+
+    // Extract from `requirements` text (common for fitness time-based challenges)
+    const requirementsText = (challenge.requirements ?? '').toString()
+    const match = requirementsText.match(/(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b/i)
+
+    if (match) {
+        const n = parseInt(match[1], 10)
+        const unitRaw = match[2].toLowerCase()
+
+        // Convert to seconds (we store time-based progress as seconds)
+        if (unitRaw.startsWith('sec') || unitRaw === 's') {
+            return { goalValue: n, goalType: 'seconds', gateSeconds: n }
+        }
+        if (unitRaw.startsWith('min') || unitRaw === 'm') {
+            const seconds = n * 60
+            return { goalValue: seconds, goalType: 'seconds', gateSeconds: seconds }
+        }
+        if (unitRaw.startsWith('hour') || unitRaw.startsWith('hr') || unitRaw === 'h') {
+            const seconds = n * 3600
+            return { goalValue: seconds, goalType: 'seconds', gateSeconds: seconds }
+        }
+    }
+
+    if (ruleValue !== null && ruleValue !== undefined) {
+        const goalValue = parseInt(String(ruleValue), 10)
+        if (!isNaN(goalValue) && goalValue >= 0) {
+            return { goalValue, goalType: 'units', gateSeconds: null }
+        }
+    }
+
+    // Fallback to previous behavior.
+    return { goalValue: 100, goalType: 'units', gateSeconds: null }
+}
+
 // POST /user/progress/workout-plan/start - Start a workout plan
 router.post('/workout-plan/start', async (req, res) => {
     try {
@@ -322,15 +378,104 @@ router.post('/challenge/update', async (req, res) => {
             return err(res, { code: 'NOT_FOUND', message: 'Challenge not found' }, 404)
         }
 
+        const derivedGoal = deriveChallengeGoal(challenge)
+        const goalValue = derivedGoal.goalValue ?? 100
+
         // Update progress
-        progress.progress = Math.min(parseInt(progressValue), challenge.goalValue || 100)
+        progress.progress = Math.min(parseInt(progressValue, 10), goalValue)
 
         // Check if completed
-        if (progress.progress >= (challenge.goalValue || 100) && progress.status !== 'completed') {
+        if (progress.progress >= goalValue && progress.status !== 'completed') {
+            // Enforce time-gate for time-based challenges (derived from `requirements`)
+            if (derivedGoal.gateSeconds !== null && derivedGoal.gateSeconds !== undefined) {
+                const joinedAt = progress.joinedAt ? new Date(progress.joinedAt).getTime() : null
+                const nowMs = Date.now()
+                const elapsedSeconds = joinedAt ? Math.floor((nowMs - joinedAt) / 1000) : 0
+
+                if (elapsedSeconds < derivedGoal.gateSeconds) {
+                    // Progress updated, but completion is locked until duration is met.
+                    await progress.save()
+                    return ok(res, progress)
+                }
+            }
+
             progress.status = 'completed'
             progress.completedAt = new Date()
             progress.xpEarned = challenge.xpReward || 500 // Award XP
         }
+
+        await progress.save()
+
+        ok(res, progress)
+    } catch (error) {
+        err(res, error)
+    }
+})
+
+// POST /user/progress/challenge/complete - Mark challenge complete (time-gated)
+router.post('/challenge/complete', async (req, res) => {
+    try {
+        const userId = req.user.id
+        const { challengeId } = req.body
+
+        if (!challengeId) {
+            return err(res, { code: 'VALIDATION_ERROR', message: 'challengeId is required' }, 400)
+        }
+
+        const progress = await UserChallengeProgress.findOne({
+            where: { userId, challengeId }
+        })
+
+        if (!progress) {
+            return err(res, { code: 'NOT_FOUND', message: 'Challenge progress not found. Please join the challenge first.' }, 404)
+        }
+
+        // Idempotent completion
+        if (progress.status === 'completed') {
+            return ok(res, progress)
+        }
+
+        const challenge = await Challenge.findByPk(challengeId)
+        if (!challenge) {
+            return err(res, { code: 'NOT_FOUND', message: 'Challenge not found' }, 404)
+        }
+
+        const derivedGoal = deriveChallengeGoal(challenge)
+        const goalValue = derivedGoal.goalValue ?? 100
+
+        // Optional time-window check based on the challenge active window
+        const now = new Date()
+        if (challenge.startTime && challenge.endTime) {
+            const start = new Date(challenge.startTime)
+            const end = new Date(challenge.endTime)
+            if (!(start <= now && end >= now)) {
+                return err(res, { code: 'CHALLENGE_NOT_ACTIVE', message: 'Challenge is not active' }, 400)
+            }
+        }
+
+        // Enforce time gate based on joinedAt when requirements indicate seconds/minutes.
+        if (derivedGoal.gateSeconds !== null && derivedGoal.gateSeconds !== undefined) {
+            const joinedAt = progress.joinedAt ? new Date(progress.joinedAt).getTime() : null
+            const nowMs = Date.now()
+            const elapsedSeconds = joinedAt ? Math.floor((nowMs - joinedAt) / 1000) : 0
+
+            if (elapsedSeconds < derivedGoal.gateSeconds) {
+                return err(res, {
+                    code: 'INSUFFICIENT_DURATION',
+                    message: 'You need to wait longer before completing this challenge.',
+                    details: {
+                        requiredSeconds: derivedGoal.gateSeconds,
+                        elapsedSeconds
+                    }
+                }, 400)
+            }
+        }
+
+        // Snap progress to the completion goal.
+        progress.progress = goalValue
+        progress.status = 'completed'
+        progress.completedAt = new Date()
+        progress.xpEarned = challenge.xpReward || 500
 
         await progress.save()
 
