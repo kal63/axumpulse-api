@@ -28,13 +28,147 @@ function ensureAbsoluteUrl(url, fallback) {
         return normalized
     }
 
-    // Local dev hosts: use http
+    // Local dev hosts: use http and ensure port when omitted.
+    // If caller passed "localhost" without a port, borrow fallback's port
+    // (or default to 3000) so redirects don't become http://localhost/path.
     if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(normalized)) {
+        const hasPort = /^(localhost|127\.0\.0\.1):\d+/i.test(normalized)
+        if (!hasPort) {
+            let fallbackPort = '3000'
+            if (fallback) {
+                const match = String(fallback).match(/^https?:\/\/[^/:]+:(\d+)/i)
+                if (match?.[1]) fallbackPort = match[1]
+            }
+            normalized = `${normalized.replace(/\/$/, '')}:${fallbackPort}`
+        }
         return `http://${normalized}`
     }
 
     // Default to https for anything else
     return `https://${normalized}`
+}
+
+function resolveFrontendBaseUrl(req, fallback) {
+    const origin = req?.headers?.origin
+    const envCandidate =
+        process.env.FRONTEND_URL ||
+        process.env.WEBAPP_URL ||
+        process.env.NEXT_PUBLIC_WEB_URL ||
+        (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '') : null)
+    const candidate = origin || envCandidate || fallback
+    return ensureAbsoluteUrl(candidate, fallback)
+}
+
+function buildPaymentReturnUrl(baseOrFullUrl, txRef, appRedirect) {
+    const safeBase = ensureAbsoluteUrl(baseOrFullUrl, 'http://localhost:3001')
+    const hasPath = /\/payment\/success(\?|$)/i.test(safeBase)
+    const base = hasPath ? safeBase : `${safeBase.replace(/\/$/, '')}/payment/success`
+    const separator = base.includes('?') ? '&' : '?'
+    let full = `${base}${separator}tx_ref=${encodeURIComponent(txRef)}`
+    if (appRedirect) {
+        full += `&app_redirect=${encodeURIComponent(appRedirect)}`
+    }
+    return full
+}
+
+function parseCallbackData(callbackData) {
+    if (!callbackData) return {}
+    if (typeof callbackData === 'object') return callbackData
+    if (typeof callbackData === 'string') {
+        try {
+            return JSON.parse(callbackData)
+        } catch (e) {
+            return {}
+        }
+    }
+    return {}
+}
+
+async function grantConsultCreditsIfNeeded(transaction, txRef) {
+    const callbackDataObj = parseCallbackData(transaction.callbackData)
+    if (!(callbackDataObj && callbackDataObj.type === 'consult_purchase')) return
+    if (callbackDataObj.consultCreditsGrantedAt) return
+
+    const { doctorId, quantity } = callbackDataObj
+    const qty = Number(quantity || 0)
+    if (!doctorId || qty <= 0) return
+
+    const db = require('../../models').sequelize
+    await db.transaction(async (t) => {
+        const tx = await PaymentTransaction.findByPk(transaction.id, {
+            lock: true,
+            transaction: t
+        })
+        const freshCallbackData = parseCallbackData(tx.callbackData)
+        if (freshCallbackData.consultCreditsGrantedAt) return
+
+        let profile = await UserProfile.findOne({
+            where: { userId: tx.userId },
+            lock: true,
+            transaction: t
+        })
+
+        if (!profile) {
+            profile = await UserProfile.create({
+                userId: tx.userId,
+                availableConsults: qty
+            }, { transaction: t })
+        } else {
+            await profile.increment('availableConsults', { by: qty, transaction: t })
+        }
+
+        tx.callbackData = {
+            ...freshCallbackData,
+            consultCreditsGrantedAt: new Date().toISOString()
+        }
+        await tx.save({ transaction: t })
+    })
+
+    console.log('[Payment] ✅ Consult credits granted (idempotent)', {
+        tx_ref: txRef,
+        user_id: transaction.userId,
+        doctor_id: doctorId,
+        quantity: qty
+    })
+}
+
+async function finalizeTransactionByTxRef(txRef) {
+    const transaction = await PaymentTransaction.findOne({ where: { txRef } })
+    if (!transaction) return { transaction: null, subscription: null, status: 'not_found' }
+
+    if (transaction.status === 'pending') {
+        try {
+            const verificationData = await verifyTransaction(txRef)
+            if (verificationData.status === 'success') {
+                transaction.status = 'success'
+                transaction.chapaRefId = verificationData.data?.chapa_reference || null
+                transaction.paymentMethod = detectPaymentMethod(verificationData)
+                transaction.completedAt = new Date()
+                transaction.verificationData = verificationData
+                transaction.verifiedAt = new Date()
+                await transaction.save()
+            }
+        } catch (e) {
+            console.warn('[Payment finalize] Chapa verify failed:', e.message)
+        }
+    }
+
+    if (transaction.status === 'success') {
+        await grantConsultCreditsIfNeeded(transaction, txRef)
+    }
+
+    let subscription = null
+    if (transaction.status === 'success' && transaction.subscriptionPlanId && transaction.trainerId) {
+        const { getUserSubscription } = require('../../services/subscriptionService')
+        subscription = await getUserSubscription(transaction.userId)
+        if (!subscription) {
+            const callbackDataObj = parseCallbackData(transaction.callbackData)
+            const duration = callbackDataObj.duration || 'monthly'
+            subscription = await activateSubscription(transaction, duration)
+        }
+    }
+
+    return { transaction, subscription, status: transaction.status }
 }
 
 /**
@@ -174,13 +308,16 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
         const lastName = nameParts[1] || ''
 
         // Construct URLs from environment variables and ensure they are valid absolute URLs
-        const rawFrontendUrl = process.env.FRONTEND_URL || 
-            (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '') : 'http://localhost:3001')
+        const rawFrontendUrl = resolveFrontendBaseUrl(req, 'http://localhost:3001')
         const rawBackendUrl = process.env.BACKEND_URL || 
             `http://localhost:${process.env.PORT || 3000}`
 
         const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
         const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3000}`)
+        const paymentReturnBase = ensureAbsoluteUrl(
+            process.env.PAYMENT_RETURN_URL || process.env.CHAPA_RETURN_URL || frontendUrl,
+            frontendUrl
+        )
 
         // Validate and format email for Chapa
         // Chapa requires a valid email format and rejects test domains
@@ -242,7 +379,7 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
             last_name: lastName,
             phone_number: phone_number,
             callback_url: `${backendUrl}/api/v1/payments/chapa/callback/${txRef}`,
-            return_url: `${frontendUrl}/payment/success?tx_ref=${txRef}`,
+            return_url: `${backendUrl}/api/v1/payments/return/${txRef}?frontend=${encodeURIComponent(paymentReturnBase)}`,
             customization: {
                 title: (process.env.APP_NAME || 'Compound 360').substring(0, 16),
                 description: `Payment for ${plan.name} subscription`.substring(0, 50),
@@ -384,7 +521,7 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
  */
 router.post('/consult/initialize', requireAuth, async (req, res) => {
     try {
-        const { doctorId, quantity = 1, phone_number, email } = req.body
+        const { doctorId, quantity = 1, phone_number, email, return_url, app_redirect } = req.body
         const user = req.user
 
         // Validation
@@ -437,14 +574,17 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
         const txRef = `CONSULT-${user.id}-${doctorId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 
         // Construct URLs from environment variables (same as subscription payment) and normalize
-        const rawFrontendUrl = process.env.FRONTEND_URL || 
-            (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '') : 'http://localhost:3001')
+        const rawFrontendUrl = resolveFrontendBaseUrl(req, 'http://localhost:3001')
         const rawBackendUrl = process.env.API_BASE_URL || 
             process.env.BACKEND_URL || 
-            `http://localhost:${process.env.PORT || 3001}`
+            `http://localhost:${process.env.PORT || 3000}`
 
         const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
-        const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3001}`)
+        const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3000}`)
+        const paymentReturnBase = ensureAbsoluteUrl(
+            return_url || process.env.PAYMENT_RETURN_URL || process.env.CHAPA_RETURN_URL || frontendUrl,
+            frontendUrl
+        )
 
         // Validate and sanitize email (similar to subscription payment)
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -590,7 +730,7 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
             phone_number: phone_number,
             tx_ref: txRef,
             callback_url: `${backendUrl}/api/v1/payments/chapa/callback/${txRef}`,
-            return_url: `${frontendUrl}/payment/success?tx_ref=${txRef}`,
+            return_url: `${backendUrl}/api/v1/payments/return/${txRef}?frontend=${encodeURIComponent(paymentReturnBase)}${app_redirect ? `&app_redirect=${encodeURIComponent(app_redirect)}` : ''}`,
             customization: {
                 title: 'Consult Purchase'.substring(0, 16),
                 description: description
@@ -745,36 +885,8 @@ router.get('/chapa/callback/:reference', async (req, res) => {
 
             // Check if this is a consult purchase
             if (callbackDataObj && callbackDataObj.type === 'consult_purchase') {
-                // Handle consult purchase
                 try {
-                    const { doctorId, quantity } = callbackDataObj
-                    
-                    if (!doctorId || !quantity) {
-                        console.error('[Payment Callback] Missing doctorId or quantity in consult purchase', {
-                            callbackData: callbackDataObj
-                        })
-                    } else {
-                        // Increment available consults for the user
-                        const profile = await UserProfile.findOne({ where: { userId: transaction.userId } })
-                        
-                        if (!profile) {
-                            // Create profile if it doesn't exist
-                            await UserProfile.create({ 
-                                userId: transaction.userId, 
-                                availableConsults: quantity 
-                            })
-                        } else {
-                            // Increment existing consults
-                            await profile.increment('availableConsults', { by: quantity })
-                        }
-                        
-                        console.log('[Payment Callback] ✅ Consult purchase processed successfully!', {
-                            tx_ref: reference,
-                            user_id: transaction.userId,
-                            doctor_id: doctorId,
-                            quantity: quantity
-                        })
-                    }
+                    await grantConsultCreditsIfNeeded(transaction, reference)
                 } catch (consultError) {
                     console.error('[Payment Callback] ❌ CRITICAL: Failed to process consult purchase:', {
                         error: consultError.message,
@@ -862,6 +974,36 @@ router.get('/chapa/callback/:reference', async (req, res) => {
     }
 })
 
+/**
+ * Browser return endpoint from payment gateway.
+ * This finalizes payment on backend (no frontend auth required),
+ * then redirects user to web success page.
+ * GET /api/v1/payments/return/:reference
+ */
+router.get('/return/:reference', async (req, res) => {
+    try {
+        const { reference } = req.params
+        const frontendBase = req.query.frontend
+            ? ensureAbsoluteUrl(String(req.query.frontend), process.env.PAYMENT_RETURN_URL || 'http://localhost:3001')
+            : resolveFrontendBaseUrl(req, process.env.PAYMENT_RETURN_URL || 'http://localhost:3001')
+        const appRedirect = req.query.app_redirect ? String(req.query.app_redirect) : undefined
+
+        const finalized = await finalizeTransactionByTxRef(reference)
+        if (!finalized.transaction) {
+            const fallback = buildPaymentReturnUrl(frontendBase, reference, appRedirect)
+            return res.redirect(fallback)
+        }
+
+        const redirectTo = buildPaymentReturnUrl(frontendBase, reference, appRedirect)
+        return res.redirect(redirectTo)
+    } catch (error) {
+        console.error('Payment return handler failed:', error)
+        const fallbackBase = process.env.PAYMENT_RETURN_URL || process.env.FRONTEND_URL || 'http://localhost:3001'
+        const redirectTo = buildPaymentReturnUrl(fallbackBase, req.params.reference)
+        return res.redirect(redirectTo)
+    }
+})
+
 
 /**
  * Manual payment verification and subscription activation endpoint
@@ -921,56 +1063,7 @@ router.get('/verify/:txRef', requireAuth, async (req, res) => {
         // Handle consult purchase if this is a consult purchase transaction
         if (transaction.status === 'success' && callbackDataObj && callbackDataObj.type === 'consult_purchase') {
             try {
-                const { doctorId, quantity } = callbackDataObj
-                
-                if (!doctorId || !quantity) {
-                    console.error('[Verify] Missing doctorId or quantity in consult purchase', {
-                        callbackData: callbackDataObj
-                    })
-                } else {
-                    // Check if consults were already added (to avoid double crediting)
-                    const profile = await UserProfile.findOne({ where: { userId: transaction.userId } })
-                    
-                    // We'll check if the transaction was already processed by looking at completedAt
-                    // If it was just completed, process it
-                    if (transaction.completedAt) {
-                        // Check current balance to see if we need to add consults
-                        // This is a simple check - in production you might want a more robust solution
-                        const currentBalance = profile ? (profile.availableConsults || 0) : 0
-                        
-                        // Only add if balance seems low (simple heuristic - could be improved)
-                        // For now, we'll always try to add, but use a transaction to prevent duplicates
-                        const sequelize = require('sequelize')
-                        const db = require('../../models').sequelize
-                        
-                        await db.transaction(async (t) => {
-                            const updatedProfile = await UserProfile.findOne({ 
-                                where: { userId: transaction.userId },
-                                lock: true,
-                                transaction: t
-                            })
-                            
-                            if (!updatedProfile) {
-                                await UserProfile.create({ 
-                                    userId: transaction.userId, 
-                                    availableConsults: quantity 
-                                }, { transaction: t })
-                            } else {
-                                await updatedProfile.increment('availableConsults', { 
-                                    by: quantity,
-                                    transaction: t
-                                })
-                            }
-                        })
-                        
-                        console.log('[Verify] ✅ Consult purchase processed successfully!', {
-                            tx_ref: txRef,
-                            user_id: transaction.userId,
-                            doctor_id: doctorId,
-                            quantity: quantity
-                        })
-                    }
-                }
+                await grantConsultCreditsIfNeeded(transaction, txRef)
             } catch (consultError) {
                 console.error('[Verify] ❌ CRITICAL: Failed to process consult purchase:', {
                     error: consultError.message,
