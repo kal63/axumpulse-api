@@ -48,6 +48,87 @@ function ensureAbsoluteUrl(url, fallback) {
     return `https://${normalized}`
 }
 
+/**
+ * Parse env-style URLs down to `scheme://host:port` only (no path).
+ * Chapa URLs are always built as `${thatOrigin}/api/v1/payments/...` — the
+ * `/api/v1/payments/return|chapa/callback` segment is never removed from the
+ * final link; we only normalize the *base* so `API_BASE_URL=.../api/v1` does
+ * not become `.../api/v1/api/v1/...`.
+ */
+function urlOriginOnly(url) {
+    if (!url || typeof url !== 'string') return ''
+    const absolute = ensureAbsoluteUrl(url.trim(), '')
+    if (!absolute) return ''
+    try {
+        const u = new URL(absolute)
+        return `${u.protocol}//${u.host}`
+    } catch {
+        const m = absolute.match(/^(https?:\/\/[^/?#]+)/i)
+        return m ? m[1] : absolute.replace(/\/$/, '')
+    }
+}
+
+function isLoopbackUrl(url) {
+    if (!url || typeof url !== 'string') return false
+    return /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url.trim())
+}
+
+/**
+ * Public base URL for Chapa callback_url / return_url.
+ * - Prefer PUBLIC_BACKEND_URL, PAYMENT_BACKEND_URL, CHAPA_BACKEND_URL, API_PUBLIC_URL.
+ * - Else use API_BASE_URL / BACKEND_URL if they are not localhost.
+ * - Else infer from the incoming request Host (mobile calling http://192.168.1.7:3000).
+ * - Production: set PUBLIC_BACKEND_URL=https://compound-360.com (optional `/api/v1` path is ignored; we still emit `/api/v1/payments/...`).
+ */
+function resolvePublicBackendUrl(req) {
+    const port = process.env.PORT || 3000
+    const localhostFallback = `http://localhost:${port}`
+
+    const explicit =
+        process.env.PUBLIC_BACKEND_URL ||
+        process.env.PAYMENT_BACKEND_URL ||
+        process.env.CHAPA_BACKEND_URL ||
+        process.env.API_PUBLIC_URL
+
+    if (explicit && String(explicit).trim()) {
+        const origin = urlOriginOnly(String(explicit).trim())
+        if (origin) return origin.replace(/\/$/, '')
+        return ensureAbsoluteUrl(String(explicit).trim(), localhostFallback).replace(/\/$/, '')
+    }
+
+    const configured = process.env.API_BASE_URL || process.env.BACKEND_URL
+    if (configured && String(configured).trim()) {
+        const trimmed = String(configured).trim()
+        const origin = urlOriginOnly(trimmed) || ensureAbsoluteUrl(trimmed, localhostFallback).replace(/\/$/, '')
+        if (origin && !isLoopbackUrl(origin)) {
+            return origin.replace(/\/$/, '')
+        }
+    }
+
+    const host = req?.get?.('host') || req?.headers?.host || ''
+    const hostname = host.split(':')[0] || ''
+    if (hostname && !/^localhost$/i.test(hostname) && !/^127\.0\.0\.1$/i.test(hostname)) {
+        const xfProto = String(
+            req?.get?.('x-forwarded-proto') ||
+                req?.headers?.['x-forwarded-proto'] ||
+                ''
+        )
+            .split(',')[0]
+            .trim()
+        const proto =
+            xfProto === 'https' || xfProto === 'http'
+                ? xfProto
+                : req?.secure
+                  ? 'https'
+                  : 'http'
+        return `${proto}://${host}`.replace(/\/$/, '')
+    }
+
+    const fb = configured ? ensureAbsoluteUrl(String(configured).trim(), localhostFallback) : localhostFallback
+    const fromFb = urlOriginOnly(fb) || fb.replace(/\/$/, '')
+    return fromFb.replace(/\/$/, '')
+}
+
 function resolveFrontendBaseUrl(req, fallback) {
     const origin = req?.headers?.origin
     const envCandidate =
@@ -309,11 +390,9 @@ router.post('/subscription/initialize', requireAuth, async (req, res) => {
 
         // Construct URLs from environment variables and ensure they are valid absolute URLs
         const rawFrontendUrl = resolveFrontendBaseUrl(req, 'http://localhost:3001')
-        const rawBackendUrl = process.env.BACKEND_URL || 
-            `http://localhost:${process.env.PORT || 3000}`
 
         const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
-        const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3000}`)
+        const backendUrl = resolvePublicBackendUrl(req)
         const paymentReturnBase = ensureAbsoluteUrl(
             process.env.PAYMENT_RETURN_URL || process.env.CHAPA_RETURN_URL || frontendUrl,
             frontendUrl
@@ -575,12 +654,9 @@ router.post('/consult/initialize', requireAuth, async (req, res) => {
 
         // Construct URLs from environment variables (same as subscription payment) and normalize
         const rawFrontendUrl = resolveFrontendBaseUrl(req, 'http://localhost:3001')
-        const rawBackendUrl = process.env.API_BASE_URL || 
-            process.env.BACKEND_URL || 
-            `http://localhost:${process.env.PORT || 3000}`
 
         const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
-        const backendUrl = ensureAbsoluteUrl(rawBackendUrl, `http://localhost:${process.env.PORT || 3000}`)
+        const backendUrl = resolvePublicBackendUrl(req)
         const paymentReturnBase = ensureAbsoluteUrl(
             return_url || process.env.PAYMENT_RETURN_URL || process.env.CHAPA_RETURN_URL || frontendUrl,
             frontendUrl
@@ -986,7 +1062,10 @@ router.get('/return/:reference', async (req, res) => {
         const frontendBase = req.query.frontend
             ? ensureAbsoluteUrl(String(req.query.frontend), process.env.PAYMENT_RETURN_URL || 'http://localhost:3001')
             : resolveFrontendBaseUrl(req, process.env.PAYMENT_RETURN_URL || 'http://localhost:3001')
-        const appRedirect = req.query.app_redirect ? String(req.query.app_redirect) : undefined
+        // Chapa sometimes re-encodes & as &amp; in the query string
+        const appRedirectRaw = req.query.app_redirect ?? req.query['amp;app_redirect']
+        const appRedirect =
+            appRedirectRaw != null && String(appRedirectRaw) !== '' ? String(appRedirectRaw) : undefined
 
         const finalized = await finalizeTransactionByTxRef(reference)
         if (!finalized.transaction) {
