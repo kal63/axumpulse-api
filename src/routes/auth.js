@@ -20,15 +20,45 @@ function ensureAbsoluteUrl(url, fallback) {
     return `https://${trimmed}`
 }
 
-function resolveFrontendBaseUrl() {
+function resolveFrontendBaseUrl(req, overrideUrl) {
     const fallback = 'http://localhost:3001'
-    const candidate =
+    const explicit =
+        overrideUrl ||
         process.env.FRONTEND_URL ||
         process.env.WEBAPP_URL ||
         process.env.NEXT_PUBLIC_WEB_URL ||
-        process.env.PAYMENT_RETURN_URL ||
-        fallback
-    return ensureAbsoluteUrl(candidate, fallback).replace(/\/$/, '')
+        process.env.PAYMENT_RETURN_URL
+    if (explicit && String(explicit).trim()) {
+        return ensureAbsoluteUrl(String(explicit).trim(), fallback).replace(/\/$/, '')
+    }
+    const host = req?.get?.('host') || req?.headers?.host || ''
+    const xfProto = String(req?.get?.('x-forwarded-proto') || req?.headers?.['x-forwarded-proto'] || '')
+        .split(',')[0]
+        .trim()
+    const proto = xfProto === 'https' || xfProto === 'http' ? xfProto : req?.secure ? 'https' : 'http'
+    if (host) return `${proto}://${host}`.replace(/\/$/, '')
+    return fallback
+}
+
+function resolveApiBaseUrl(req, overrideUrl) {
+    const fallback = 'http://localhost:3000/api/v1'
+    const explicit =
+        overrideUrl ||
+        process.env.API_PUBLIC_URL ||
+        process.env.PUBLIC_BACKEND_URL ||
+        process.env.API_BASE_URL ||
+        process.env.BACKEND_URL
+    if (explicit && String(explicit).trim()) {
+        const u = ensureAbsoluteUrl(String(explicit).trim(), fallback).replace(/\/$/, '')
+        return u.endsWith('/api/v1') ? u : `${u}/api/v1`
+    }
+    const host = req?.get?.('host') || req?.headers?.host || ''
+    const xfProto = String(req?.get?.('x-forwarded-proto') || req?.headers?.['x-forwarded-proto'] || '')
+        .split(',')[0]
+        .trim()
+    const proto = xfProto === 'https' || xfProto === 'http' ? xfProto : req?.secure ? 'https' : 'http'
+    if (host) return `${proto}://${host}/api/v1`.replace(/\/$/, '')
+    return fallback
 }
 
 function sanitizeNextPath(next) {
@@ -290,13 +320,16 @@ router.post('/web-bridge-link', requireAuth, async (req, res) => {
     try {
         const userId = req.user.id
         const next = sanitizeNextPath(req.body?.next)
+        const webBaseOverride = req.body?.web_base_url
+        const apiBaseOverride = req.body?.api_base_url
         const code = crypto.randomBytes(24).toString('hex')
         const expiresAt = Date.now() + 5 * 60 * 1000 // 5 minutes
         webBridgeCodes.set(code, { userId, expiresAt })
 
-        const webBase = resolveFrontendBaseUrl()
-        const url = `${webBase}/auth/bridge?code=${encodeURIComponent(code)}&next=${encodeURIComponent(next)}`
-        return ok(res, { url, expiresAt })
+        const webBase = resolveFrontendBaseUrl(req, webBaseOverride)
+        const apiBase = resolveApiBaseUrl(req, apiBaseOverride)
+        const url = `${webBase}/auth/bridge?code=${encodeURIComponent(code)}&next=${encodeURIComponent(next)}&api_base=${encodeURIComponent(apiBase)}`
+        return ok(res, { url, expiresAt, webBase, apiBase })
     } catch (e) {
         console.error('web-bridge-link failed:', e)
         return err(res, { code: 'INTERNAL_ERROR', message: 'Failed to create bridge link' }, 500)
