@@ -380,7 +380,7 @@ router.post('/subscription/change-package/initialize', requireAuth, async (req, 
     try {
         const user = req.user
         const userId = user.id
-        const { new_subscription_plan_id, new_trainer_id, duration, phone_number, email } = req.body || {}
+        const { new_subscription_plan_id, new_trainer_id, duration, phone_number, email, app_redirect } = req.body || {}
 
         if (!new_subscription_plan_id) {
             return err(res, { code: 'BAD_REQUEST', message: 'new_subscription_plan_id is required' }, 400)
@@ -521,7 +521,7 @@ router.post('/subscription/change-package/initialize', requireAuth, async (req, 
             last_name: lastName,
             phone_number: phone_number,
             callback_url: `${backendUrl}/api/v1/payments/chapa/callback/${txRef}`,
-            return_url: `${backendUrl}/api/v1/payments/return/${txRef}?frontend=${encodeURIComponent(paymentReturnBase)}`,
+            return_url: `${backendUrl}/api/v1/payments/return/${txRef}?frontend=${encodeURIComponent(paymentReturnBase)}${app_redirect ? `&app_redirect=${encodeURIComponent(app_redirect)}` : ''}`,
             customization: {
                 title: (process.env.APP_NAME || 'Compound 360').substring(0, 16),
                 description: `Payment for subscription change`.substring(0, 50),
