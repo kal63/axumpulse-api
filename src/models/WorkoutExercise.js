@@ -10,6 +10,11 @@ module.exports = (sequelize, DataTypes) => {
                 foreignKey: 'workoutPlanId',
                 as: 'workoutPlan'
             });
+
+            WorkoutExercise.belongsTo(models.Content, {
+                foreignKey: 'contentId',
+                as: 'exerciseContent'
+            });
         }
 
         // Override toJSON to parse JSON fields that might be returned as strings
@@ -95,6 +100,14 @@ module.exports = (sequelize, DataTypes) => {
         notes: {
             type: DataTypes.TEXT,
             allowNull: true
+        },
+        contentId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            references: {
+                model: 'Contents',
+                key: 'id'
+            }
         }
     }, {
         sequelize,

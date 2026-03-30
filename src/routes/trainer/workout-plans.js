@@ -4,7 +4,15 @@ const express = require('express')
 const router = express.Router()
 const { ok, err } = require('../../utils/errors')
 const { getPagination, executePaginatedQueryWithSeparateCount } = require('../../utils/pagination')
-const { WorkoutPlan, WorkoutExercise } = require('../../models')
+const { WorkoutPlan, WorkoutExercise, Content } = require('../../models')
+const { resolveApprovedVideoContentId } = require('../../utils/validateTrainerVideoContent')
+
+const CONTENT_PICK_ATTRS = ['id', 'title', 'fileUrl', 'thumbnailUrl', 'duration', 'type', 'status', 'trainerId']
+
+function mapContentErr(res, e) {
+    const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400
+    return err(res, { code: e.code || 'VALIDATION_ERROR', message: e.message }, status)
+}
 
 // GET /trainer/workout-plans
 router.get('/', async (req, res) => {
@@ -21,8 +29,22 @@ router.get('/', async (req, res) => {
             where,
             include: [
                 {
+                    model: Content,
+                    as: 'introContent',
+                    required: false,
+                    attributes: CONTENT_PICK_ATTRS
+                },
+                {
                     model: WorkoutExercise,
-                    as: 'exercises'
+                    as: 'exercises',
+                    include: [
+                        {
+                            model: Content,
+                            as: 'exerciseContent',
+                            required: false,
+                            attributes: CONTENT_PICK_ATTRS
+                        }
+                    ]
                 }
             ],
             order: [['createdAt', 'DESC']],
@@ -49,8 +71,22 @@ router.get('/:id', async (req, res) => {
             where: { id: req.params.id, trainerId },
             include: [
                 {
+                    model: Content,
+                    as: 'introContent',
+                    required: false,
+                    attributes: CONTENT_PICK_ATTRS
+                },
+                {
                     model: WorkoutExercise,
-                    as: 'exercises'
+                    as: 'exercises',
+                    include: [
+                        {
+                            model: Content,
+                            as: 'exerciseContent',
+                            required: false,
+                            attributes: CONTENT_PICK_ATTRS
+                        }
+                    ]
                 }
             ]
         })
@@ -82,6 +118,15 @@ router.post('/', async (req, res) => {
             return err(res, { code: 'VALIDATION_ERROR', message: 'difficulty must be one of: beginner, intermediate, advanced' }, 400)
         }
 
+        let planContentId
+        if ('contentId' in req.body && req.body.contentId !== undefined) {
+            try {
+                planContentId = await resolveApprovedVideoContentId(trainerId, req.body.contentId)
+            } catch (e) {
+                return mapContentErr(res, e)
+            }
+        }
+
         const workoutPlan = await WorkoutPlan.create({
             trainerId,
             title,
@@ -92,7 +137,8 @@ router.post('/', async (req, res) => {
             tags: Array.isArray(tags) ? tags : [],
             isPublic: isPublic !== undefined ? !!isPublic : true,
             estimatedDuration,
-            status: 'draft'
+            status: 'draft',
+            ...(planContentId !== undefined ? { contentId: planContentId } : {})
         })
 
         ok(res, { workoutPlan })
@@ -130,8 +176,43 @@ router.put('/:id', async (req, res) => {
             }
         }
 
+        if ('contentId' in req.body && req.body.contentId !== undefined) {
+            try {
+                workoutPlan.contentId = await resolveApprovedVideoContentId(trainerId, req.body.contentId)
+            } catch (e) {
+                return mapContentErr(res, e)
+            }
+        }
+
         await workoutPlan.save()
-        ok(res, { workoutPlan })
+
+        const refreshed = await WorkoutPlan.findByPk(workoutPlan.id, {
+            include: [
+                {
+                    model: Content,
+                    as: 'introContent',
+                    required: false,
+                    attributes: CONTENT_PICK_ATTRS
+                },
+                {
+                    model: WorkoutExercise,
+                    as: 'exercises',
+                    include: [
+                        {
+                            model: Content,
+                            as: 'exerciseContent',
+                            required: false,
+                            attributes: CONTENT_PICK_ATTRS
+                        }
+                    ]
+                }
+            ]
+        })
+        if (refreshed && refreshed.exercises) {
+            refreshed.exercises.sort((a, b) => a.order - b.order)
+        }
+
+        ok(res, { workoutPlan: refreshed || workoutPlan })
     } catch (error) {
         err(res, error)
     }
@@ -179,6 +260,15 @@ router.post('/:id/exercises', async (req, res) => {
         })
         const order = lastExercise ? lastExercise.order + 1 : 1
 
+        let exerciseContentId
+        if ('contentId' in req.body && req.body.contentId !== undefined) {
+            try {
+                exerciseContentId = await resolveApprovedVideoContentId(trainerId, req.body.contentId)
+            } catch (e) {
+                return mapContentErr(res, e)
+            }
+        }
+
         const exercise = await WorkoutExercise.create({
             workoutPlanId: workoutPlan.id,
             name,
@@ -192,14 +282,26 @@ router.post('/:id/exercises', async (req, res) => {
             duration,
             restTime,
             order,
-            notes
+            notes,
+            ...(exerciseContentId !== undefined ? { contentId: exerciseContentId } : {})
         })
 
         // Update total exercises count
         workoutPlan.totalExercises = await WorkoutExercise.count({ where: { workoutPlanId: workoutPlan.id } })
         await workoutPlan.save()
 
-        ok(res, { exercise })
+        const exerciseOut = await WorkoutExercise.findByPk(exercise.id, {
+            include: [
+                {
+                    model: Content,
+                    as: 'exerciseContent',
+                    required: false,
+                    attributes: CONTENT_PICK_ATTRS
+                }
+            ]
+        })
+
+        ok(res, { exercise: exerciseOut })
     } catch (error) {
         err(res, error)
     }
@@ -232,8 +334,28 @@ router.put('/:id/exercises/:exerciseId', async (req, res) => {
             }
         }
 
+        if ('contentId' in req.body && req.body.contentId !== undefined) {
+            try {
+                exercise.contentId = await resolveApprovedVideoContentId(trainerId, req.body.contentId)
+            } catch (e) {
+                return mapContentErr(res, e)
+            }
+        }
+
         await exercise.save()
-        ok(res, { exercise })
+
+        const exerciseOut = await WorkoutExercise.findByPk(exercise.id, {
+            include: [
+                {
+                    model: Content,
+                    as: 'exerciseContent',
+                    required: false,
+                    attributes: CONTENT_PICK_ATTRS
+                }
+            ]
+        })
+
+        ok(res, { exercise: exerciseOut })
     } catch (error) {
         err(res, error)
     }

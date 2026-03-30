@@ -4,12 +4,47 @@ const express = require('express')
 const router = express.Router()
 const { ok, err } = require('../../utils/errors')
 const { getPagination, executePaginatedQuery } = require('../../utils/pagination')
-const { WorkoutPlan, WorkoutExercise, Trainer, User, UserWorkoutPlanProgress, WorkoutPlanInsight, ConsultBooking, ConsultSlot } = require('../../models')
+const { WorkoutPlan, WorkoutExercise, Trainer, User, UserWorkoutPlanProgress, WorkoutPlanInsight, ConsultBooking, ConsultSlot, Content } = require('../../models')
 const { Op } = require('sequelize')
 const { requireAuth, optionalAuth } = require('../../middleware/auth')
 const { requireMedical } = require('../../middleware/requireMedical')
 const { generateWorkoutPlanInsightWithAI } = require('../../utils/WorkoutPlanInsightGenerator')
 const { getSubscribedTrainerId } = require('../../services/subscriptionService')
+
+function playbackVideoDto(contentRow, planTrainerId) {
+    if (!contentRow) return null
+    const c = contentRow.get ? contentRow.get({ plain: true }) : contentRow
+    if (c.trainerId !== planTrainerId) return null
+    if (c.status !== 'approved' || c.type !== 'video' || !c.fileUrl) return null
+    return {
+        id: c.id,
+        title: c.title,
+        fileUrl: c.fileUrl,
+        thumbnailUrl: c.thumbnailUrl,
+        duration: c.duration
+    }
+}
+
+function sanitizeWorkoutPlanForUser(workoutPlan) {
+    const planTrainerId = workoutPlan.trainerId
+    const planPlain = workoutPlan.get({ plain: true })
+    const introVideo = playbackVideoDto(workoutPlan.introContent, planTrainerId)
+    delete planPlain.introContent
+    planPlain.introVideo = introVideo
+
+    if (planPlain.exercises?.length) {
+        planPlain.exercises.sort((a, b) => a.order - b.order)
+        planPlain.exercises = planPlain.exercises.map((ex) => {
+            const { exerciseContent, ...rest } = ex
+            return {
+                ...rest,
+                video: playbackVideoDto(exerciseContent, planTrainerId)
+            }
+        })
+    }
+
+    return planPlain
+}
 
 // GET /user/workout-plans - Get all approved, public workout plans
 // Use optionalAuth to get userId if authenticated, but allow unauthenticated access
@@ -172,9 +207,26 @@ router.get('/:id', optionalAuth, async (req, res) => {
                     ]
                 },
                 {
+                    model: Content,
+                    as: 'introContent',
+                    required: false,
+                    attributes: ['id', 'title', 'fileUrl', 'thumbnailUrl', 'duration', 'type', 'status', 'trainerId']
+                },
+                {
                     model: WorkoutExercise,
                     as: 'exercises',
-                    attributes: ['id', 'name', 'description', 'sets', 'reps', 'duration', 'restTime', 'order', 'notes']
+                    attributes: [
+                        'id', 'name', 'description', 'category', 'equipment', 'muscleGroups',
+                        'sets', 'reps', 'weight', 'duration', 'restTime', 'order', 'notes', 'contentId'
+                    ],
+                    include: [
+                        {
+                            model: Content,
+                            as: 'exerciseContent',
+                            required: false,
+                            attributes: ['id', 'title', 'fileUrl', 'thumbnailUrl', 'duration', 'type', 'status', 'trainerId']
+                        }
+                    ]
                 },
                 // Include user's progress if authenticated
                 ...(userId ? [{
@@ -243,7 +295,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
         })
 
         ok(res, {
-            workoutPlan,
+            workoutPlan: sanitizeWorkoutPlanForUser(workoutPlan),
             relatedPlans
         })
     } catch (error) {

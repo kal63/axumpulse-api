@@ -30,6 +30,11 @@ module.exports = (sequelize, DataTypes) => {
                 as: 'insights',
                 onDelete: 'CASCADE'
             });
+
+            WorkoutPlan.belongsTo(models.Content, {
+                foreignKey: 'contentId',
+                as: 'introContent'
+            });
         }
 
         // Override toJSON to parse JSON fields that might be returned as strings
@@ -144,6 +149,14 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false,
             defaultValue: false,
             comment: 'Whether this workout plan is available for use in games (spin & win)'
+        },
+        contentId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            references: {
+                model: 'Contents',
+                key: 'id'
+            }
         }
     }, {
         sequelize,
