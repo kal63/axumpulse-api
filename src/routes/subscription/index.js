@@ -5,9 +5,13 @@ const router = express.Router()
 const plansRoutes = require('./plans')
 const email = require('./email')
 const userSubscriptionsRoutes = require('./user-subscriptions')
+const changePackageRoutes = require('./change-package')
+const changeTrainerRoutes = require('./change-trainer')
 
 router.use('/plans', plansRoutes)
 router.use('/email', email)
+router.use('/change-package', changePackageRoutes)
+router.use('/change-trainer', changeTrainerRoutes)
 router.use('/', userSubscriptionsRoutes)
 
 module.exports = router

@@ -33,6 +33,69 @@ function calculateExpirationDate(duration, startDate = new Date()) {
     return start
 }
 
+function getPriceForDuration(plan, duration) {
+    if (!plan) return 0
+    switch (duration) {
+        case 'daily':
+            return parseFloat(plan.dailyPrice)
+        case 'monthly':
+            return parseFloat(plan.monthlyPrice)
+        case 'threeMonth':
+            return parseFloat(plan.threeMonthPrice)
+        case 'sixMonth':
+            return parseFloat(plan.sixMonthPrice)
+        case 'nineMonth':
+            return parseFloat(plan.nineMonthPrice)
+        case 'yearly':
+            return parseFloat(plan.yearlyPrice)
+        default:
+            return parseFloat(plan.monthlyPrice)
+    }
+}
+
+function roundCurrency(amount) {
+    const n = Number(amount || 0)
+    return Math.round(n * 100) / 100
+}
+
+/**
+ * Quote how much a user should pay for a subscription package change.
+ * Policy:
+ * - upgrades: pay (newPrice - oldPrice) prorated by remaining time
+ * - downgrades or same price: pay 0 (no refund)
+ */
+function quoteSubscriptionChange({ currentSubscription, newPlan, duration, now = new Date() }) {
+    const oldPlan = currentSubscription?.subscriptionPlan
+    const startedAt = new Date(currentSubscription?.startedAt || now)
+    const expiresAt = new Date(currentSubscription?.expiresAt || now)
+
+    const nowDate = new Date(now)
+    const remainingSeconds = Math.max(0, Math.floor((expiresAt.getTime() - nowDate.getTime()) / 1000))
+    const totalSeconds = Math.max(1, Math.floor((expiresAt.getTime() - startedAt.getTime()) / 1000))
+    const remainingRatio = remainingSeconds / totalSeconds
+
+    const oldPrice = getPriceForDuration(oldPlan, duration)
+    const newPrice = getPriceForDuration(newPlan, duration)
+
+    const rawDelta = newPrice - oldPrice
+    const baseDelta = Math.max(rawDelta, 0)
+    const amountDue = roundCurrency(baseDelta * remainingRatio)
+
+    return {
+        duration,
+        oldPrice,
+        newPrice,
+        rawDelta,
+        baseDelta,
+        remainingSeconds,
+        totalSeconds,
+        remainingRatio,
+        amountDue,
+        isUpgrade: rawDelta > 0,
+        isDowngrade: rawDelta < 0,
+    }
+}
+
 /**
  * Activate user subscription after payment
  * @param {Object} transaction - PaymentTransaction object
@@ -233,12 +296,105 @@ async function getSubscribedTrainerId(userId) {
     }
 }
 
+async function changeUserSubscriptionPackage({
+    userId,
+    newSubscriptionPlanId,
+    duration,
+    newTrainerId,
+    txRef,
+    now = new Date(),
+}) {
+    const current = await getUserSubscription(userId)
+    if (!current) {
+        const error = new Error('No active subscription found')
+        error.code = 'NO_ACTIVE_SUBSCRIPTION'
+        throw error
+    }
+
+    const plan = await SubscriptionPlan.findByPk(newSubscriptionPlanId)
+    if (!plan) {
+        const error = new Error('Subscription plan not found')
+        error.code = 'PLAN_NOT_FOUND'
+        throw error
+    }
+    if (!plan.active) {
+        const error = new Error('This subscription plan is not available')
+        error.code = 'PLAN_INACTIVE'
+        throw error
+    }
+
+    const targetTrainerId = newTrainerId || current.trainerId
+    const keepExpiresAt = current.expiresAt
+    const newDuration = duration || current.duration
+
+    await UserSubscription.update(
+        { status: 'cancelled' },
+        { where: { id: current.id, status: 'active' } }
+    )
+
+    const subscription = await UserSubscription.create({
+        userId,
+        trainerId: targetTrainerId,
+        subscriptionPlanId: plan.id,
+        duration: newDuration,
+        startedAt: now,
+        expiresAt: keepExpiresAt,
+        status: 'active',
+        lastPaymentReference: txRef || null,
+    })
+
+    return subscription
+}
+
+async function changeUserSubscriptionTrainer({
+    userId,
+    newTrainerId,
+    txRef,
+    now = new Date(),
+}) {
+    const current = await getUserSubscription(userId)
+    if (!current) {
+        const error = new Error('No active subscription found')
+        error.code = 'NO_ACTIVE_SUBSCRIPTION'
+        throw error
+    }
+
+    const trainer = await User.findByPk(newTrainerId)
+    if (!trainer || !trainer.isTrainer) {
+        const error = new Error('Trainer not found')
+        error.code = 'TRAINER_NOT_FOUND'
+        throw error
+    }
+
+    await UserSubscription.update(
+        { status: 'cancelled' },
+        { where: { id: current.id, status: 'active' } }
+    )
+
+    const subscription = await UserSubscription.create({
+        userId,
+        trainerId: trainer.id,
+        subscriptionPlanId: current.subscriptionPlanId,
+        duration: current.duration,
+        startedAt: now,
+        expiresAt: current.expiresAt,
+        status: 'active',
+        lastPaymentReference: txRef || null,
+    })
+
+    return subscription
+}
+
 module.exports = {
     activateSubscription,
     getUserSubscription,
     cancelSubscription,
     hasActiveSubscription,
     getSubscribedTrainerId,
-    calculateExpirationDate
+    calculateExpirationDate,
+    getPriceForDuration,
+    quoteSubscriptionChange,
+    changeUserSubscriptionPackage,
+    changeUserSubscriptionTrainer,
 }
 

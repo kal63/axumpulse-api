@@ -7,7 +7,7 @@ const { initializePayment, verifyTransaction } = require('../../utils/chapaServi
 const { PaymentTransaction, SubscriptionPlan, UserSubscription, User, MedicalProfessional, UserProfile } = require('../../models')
 const { requireAuth } = require('../../middleware/auth')
 const { Op } = require('sequelize')
-const { activateSubscription } = require('../../services/subscriptionService')
+const { activateSubscription, getUserSubscription, quoteSubscriptionChange, changeUserSubscriptionPackage } = require('../../services/subscriptionService')
 
 /**
  * Ensure a URL is absolute and has a protocol so that
@@ -213,6 +213,49 @@ async function grantConsultCreditsIfNeeded(transaction, txRef) {
     })
 }
 
+async function applySubscriptionChangeIfNeeded(transaction, txRef) {
+    const callbackDataObj = parseCallbackData(transaction.callbackData)
+    if (!(callbackDataObj && callbackDataObj.type === 'subscription_change')) return null
+
+    const db = require('../../models').sequelize
+    let subscription = null
+
+    await db.transaction(async (t) => {
+        const tx = await PaymentTransaction.findByPk(transaction.id, { lock: true, transaction: t })
+        const freshCb = parseCallbackData(tx.callbackData)
+        if (freshCb && freshCb.subscriptionChangeAppliedAt) {
+            subscription = await getUserSubscription(tx.userId)
+            return
+        }
+
+        const duration = freshCb.duration || 'monthly'
+        const newPlanId = freshCb.newPlanId || tx.subscriptionPlanId
+        const newTrainerId = freshCb.newTrainerId || tx.trainerId
+
+        subscription = await changeUserSubscriptionPackage({
+            userId: tx.userId,
+            newSubscriptionPlanId: newPlanId,
+            duration,
+            newTrainerId,
+            txRef: tx.txRef,
+            now: new Date(),
+        })
+
+        tx.callbackData = {
+            ...freshCb,
+            subscriptionChangeAppliedAt: new Date().toISOString(),
+        }
+        await tx.save({ transaction: t })
+    })
+
+    console.log('[Payment] ✅ Subscription change applied (idempotent)', {
+        tx_ref: txRef,
+        user_id: transaction.userId,
+    })
+
+    return subscription
+}
+
 async function finalizeTransactionByTxRef(txRef) {
     const transaction = await PaymentTransaction.findOne({ where: { txRef } })
     if (!transaction) return { transaction: null, subscription: null, status: 'not_found' }
@@ -239,13 +282,16 @@ async function finalizeTransactionByTxRef(txRef) {
     }
 
     let subscription = null
-    if (transaction.status === 'success' && transaction.subscriptionPlanId && transaction.trainerId) {
-        const { getUserSubscription } = require('../../services/subscriptionService')
-        subscription = await getUserSubscription(transaction.userId)
-        if (!subscription) {
-            const callbackDataObj = parseCallbackData(transaction.callbackData)
-            const duration = callbackDataObj.duration || 'monthly'
-            subscription = await activateSubscription(transaction, duration)
+    if (transaction.status === 'success') {
+        const callbackDataObj = parseCallbackData(transaction.callbackData)
+        if (callbackDataObj && callbackDataObj.type === 'subscription_change') {
+            subscription = await applySubscriptionChangeIfNeeded(transaction, txRef)
+        } else if (transaction.subscriptionPlanId && transaction.trainerId) {
+            subscription = await getUserSubscription(transaction.userId)
+            if (!subscription) {
+                const duration = callbackDataObj.duration || 'monthly'
+                subscription = await activateSubscription(transaction, duration)
+            }
         }
     }
 
@@ -325,6 +371,207 @@ function detectPaymentMethod(verificationData) {
 
     return methods[method] || 'other'
 }
+
+/**
+ * Initialize payment for subscription package change (upgrade proration).
+ * POST /api/v1/payments/subscription/change-package/initialize
+ */
+router.post('/subscription/change-package/initialize', requireAuth, async (req, res) => {
+    try {
+        const user = req.user
+        const userId = user.id
+        const { new_subscription_plan_id, new_trainer_id, duration, phone_number, email } = req.body || {}
+
+        if (!new_subscription_plan_id) {
+            return err(res, { code: 'BAD_REQUEST', message: 'new_subscription_plan_id is required' }, 400)
+        }
+        if (!duration) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Duration is required' }, 400)
+        }
+        if (!phone_number) {
+            return err(res, { code: 'BAD_REQUEST', message: 'Phone number is required' }, 400)
+        }
+
+        // Validate phone number format (Ethiopian format: 09xxxxxxxx or 07xxxxxxxx)
+        const phoneRegex = /^(09|07)[0-9]{8}$/
+        if (!phoneRegex.test(phone_number)) {
+            return err(res, {
+                code: 'VALIDATION_ERROR',
+                message: 'Phone number must start with 09 or 07 followed by 8 digits'
+            }, 400)
+        }
+
+        const currentSubscription = await getUserSubscription(userId)
+        if (!currentSubscription) {
+            return err(res, { code: 'BAD_REQUEST', message: 'No active subscription found' }, 400)
+        }
+
+        const newPlan = await SubscriptionPlan.findByPk(new_subscription_plan_id)
+        if (!newPlan) {
+            return err(res, { code: 'NOT_FOUND', message: 'Subscription plan not found' }, 404)
+        }
+        if (!newPlan.active) {
+            return err(res, { code: 'BAD_REQUEST', message: 'This subscription plan is not available' }, 400)
+        }
+
+        const quote = quoteSubscriptionChange({
+            currentSubscription,
+            newPlan,
+            duration,
+            now: new Date(),
+        })
+
+        const amount = quote.amountDue
+
+        // Generate unique transaction reference
+        const txRef = `SUBCHG-${user.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+        // Split user name into first and last name
+        const nameParts = (user.name || '').split(' ', 2)
+        const firstName = nameParts[0] || user.name || 'User'
+        const lastName = nameParts[1] || ''
+
+        // Construct URLs from environment variables and ensure they are valid absolute URLs
+        const rawFrontendUrl = resolveFrontendBaseUrl(req, 'http://localhost:3001')
+        const frontendUrl = ensureAbsoluteUrl(rawFrontendUrl, 'http://localhost:3001')
+        const backendUrl = resolvePublicBackendUrl(req)
+        const paymentReturnBase = ensureAbsoluteUrl(
+            process.env.PAYMENT_RETURN_URL || process.env.CHAPA_RETURN_URL || frontendUrl,
+            frontendUrl
+        )
+
+        // Validate and format email for Chapa (reuse existing logic)
+        let customerEmail = email || user.email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        const invalidDomains = ['test.com', 'example.com', 'test.test', 'invalid.com', 'fake.com', 'dummy.com']
+        if (customerEmail && emailRegex.test(customerEmail)) {
+            const emailDomain = customerEmail.split('@')[1]?.toLowerCase()
+            if (emailDomain && invalidDomains.includes(emailDomain)) {
+                return err(res, {
+                    code: 'VALIDATION_ERROR',
+                    message: 'The payment gateway does not accept test email addresses. Please use a valid email address (e.g., Gmail, Yahoo, Outlook, or your company email).',
+                }, 400)
+            }
+        }
+        if (!customerEmail || !emailRegex.test(customerEmail)) {
+            const cleanPhone = (phone_number || user.phone || '').replace(/[^\d]/g, '').replace(/^251/, '')
+            if (cleanPhone && cleanPhone.length >= 9) {
+                customerEmail = `user${cleanPhone}@axumpulse.com`
+            } else {
+                customerEmail = `user${user.id}@axumpulse.com`
+            }
+        }
+        if (!emailRegex.test(customerEmail)) {
+            return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid email format. Please provide a valid email address.' }, 400)
+        }
+
+        const callbackData = {
+            type: 'subscription_change',
+            duration,
+            oldSubscriptionId: currentSubscription.id,
+            oldPlanId: currentSubscription.subscriptionPlanId,
+            oldTrainerId: currentSubscription.trainerId,
+            newPlanId: newPlan.id,
+            newTrainerId: new_trainer_id || currentSubscription.trainerId,
+            proration: quote,
+        }
+
+        // If no payment is needed (downgrade/same price/expired), apply immediately.
+        if (!amount || Number(amount) <= 0) {
+            await PaymentTransaction.create({
+                userId: user.id,
+                subscriptionPlanId: newPlan.id,
+                trainerId: callbackData.newTrainerId,
+                txRef: txRef,
+                amount: 0,
+                currency: 'ETB',
+                status: 'success',
+                customerEmail: customerEmail,
+                customerName: user.name || 'User',
+                customerPhone: phone_number,
+                callbackData,
+                completedAt: new Date(),
+                verifiedAt: new Date(),
+            })
+
+            const subscription = await changeUserSubscriptionPackage({
+                userId,
+                newSubscriptionPlanId: newPlan.id,
+                duration,
+                newTrainerId: callbackData.newTrainerId,
+                txRef,
+                now: new Date(),
+            })
+
+            return ok(res, {
+                checkout_url: null,
+                tx_ref: txRef,
+                no_payment_required: true,
+                quote,
+                subscription,
+            })
+        }
+
+        const paymentData = {
+            amount: String(amount),
+            currency: 'ETB',
+            email: customerEmail,
+            tx_ref: txRef,
+            first_name: firstName,
+            last_name: lastName,
+            phone_number: phone_number,
+            callback_url: `${backendUrl}/api/v1/payments/chapa/callback/${txRef}`,
+            return_url: `${backendUrl}/api/v1/payments/return/${txRef}?frontend=${encodeURIComponent(paymentReturnBase)}`,
+            customization: {
+                title: (process.env.APP_NAME || 'Compound 360').substring(0, 16),
+                description: `Payment for subscription change`.substring(0, 50),
+            },
+        }
+
+        const payment = await initializePayment(paymentData)
+        if (!payment.status || payment.status !== 'success') {
+            return err(res, {
+                code: 'PAYMENT_INIT_FAILED',
+                message: 'Failed to initialize payment',
+                error: payment.message || 'Unknown error',
+            }, 400)
+        }
+        if (!payment.data || !payment.data.checkout_url) {
+            return err(res, {
+                code: 'PAYMENT_INIT_FAILED',
+                message: 'Payment initialized but checkout URL not received',
+                error: 'Invalid response from payment gateway',
+            }, 500)
+        }
+
+        await PaymentTransaction.create({
+            userId: user.id,
+            subscriptionPlanId: newPlan.id,
+            trainerId: callbackData.newTrainerId,
+            txRef: txRef,
+            amount: amount,
+            currency: 'ETB',
+            status: 'pending',
+            customerEmail: customerEmail,
+            customerName: user.name || 'User',
+            customerPhone: phone_number,
+            callbackData,
+        })
+
+        return ok(res, {
+            checkout_url: payment.data.checkout_url,
+            tx_ref: txRef,
+            quote,
+        })
+    } catch (error) {
+        console.error('Change-package payment init failed:', error)
+        return err(res, {
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to initialize subscription change payment',
+            error: error.message,
+        }, 500)
+    }
+})
 
 /**
  * Initialize payment for subscription
@@ -971,6 +1218,21 @@ router.get('/chapa/callback/:reference', async (req, res) => {
                         stack: consultError.stack
                     })
                 }
+            } else if (callbackDataObj && callbackDataObj.type === 'subscription_change') {
+                try {
+                    await applySubscriptionChangeIfNeeded(transaction, reference)
+                    console.log('[Payment Callback] ✅ Subscription change applied successfully!', {
+                        tx_ref: reference,
+                        user_id: transaction.userId,
+                    })
+                } catch (changeError) {
+                    console.error('[Payment Callback] ❌ CRITICAL: Failed to apply subscription change:', {
+                        error: changeError.message,
+                        tx_ref: reference,
+                        user_id: transaction.userId,
+                        stack: changeError.stack,
+                    })
+                }
             } else {
                 // Handle subscription activation (existing logic)
                 // CRITICAL: Activate subscription immediately when payment succeeds
@@ -1153,11 +1415,29 @@ router.get('/verify/:txRef', requireAuth, async (req, res) => {
             }
         }
 
+        // Apply subscription change if this is a subscription change transaction
+        if (transaction.status === 'success' && callbackDataObj && callbackDataObj.type === 'subscription_change') {
+            try {
+                await applySubscriptionChangeIfNeeded(transaction, txRef)
+            } catch (changeError) {
+                console.error('[Verify] ❌ CRITICAL: Failed to apply subscription change:', {
+                    error: changeError.message,
+                    tx_ref: txRef,
+                    user_id: transaction.userId,
+                    stack: changeError.stack
+                })
+                return err(res, {
+                    code: 'SUBSCRIPTION_CHANGE_FAILED',
+                    message: 'Payment was successful but subscription change failed. Please contact support.',
+                    error: changeError.message,
+                }, 500)
+            }
+        }
+
         // CRITICAL: If payment was successful, ALWAYS try to activate subscription
         // This handles cases where Chapa callback didn't fire or failed
         if (transaction.status === 'success' && transaction.subscriptionPlanId && transaction.trainerId) {
             // Check if subscription already exists
-            const { getUserSubscription } = require('../../services/subscriptionService')
             let existingSubscription = null
             try {
                 existingSubscription = await getUserSubscription(userId)
