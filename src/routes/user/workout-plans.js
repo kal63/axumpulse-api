@@ -25,6 +25,26 @@ function playbackVideoDto(contentRow, planTrainerId) {
     }
 }
 
+/** JSON columns may arrive as strings from MySQL; get({ plain: true }) skips model toJSON. */
+function normalizeStringArrayField(value) {
+    if (value == null) return []
+    if (Array.isArray(value)) {
+        return value.filter((x) => typeof x === 'string')
+    }
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value)
+            if (Array.isArray(parsed)) {
+                return parsed.filter((x) => typeof x === 'string')
+            }
+        } catch (_) {
+            /* not JSON */
+        }
+        return value.split(',').map((s) => s.trim()).filter(Boolean)
+    }
+    return []
+}
+
 function sanitizeWorkoutPlanForUser(workoutPlan) {
     const planTrainerId = workoutPlan.trainerId
     const planPlain = workoutPlan.get({ plain: true })
@@ -42,6 +62,8 @@ function sanitizeWorkoutPlanForUser(workoutPlan) {
             }
         })
     }
+
+    planPlain.tags = normalizeStringArrayField(planPlain.tags)
 
     return planPlain
 }
