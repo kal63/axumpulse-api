@@ -4,7 +4,14 @@ const express = require('express')
 const router = express.Router()
 const { ok, err } = require('../../utils/errors')
 const { getPagination, executePaginatedQueryWithSeparateCount } = require('../../utils/pagination')
-const { WorkoutPlan, WorkoutExercise, Content } = require('../../models')
+const {
+    WorkoutPlan,
+    WorkoutExercise,
+    Content,
+    UserExerciseProgress,
+    UserWorkoutPlanProgress,
+    sequelize
+} = require('../../models')
 const { resolveApprovedVideoContentId } = require('../../utils/validateTrainerVideoContent')
 
 const CONTENT_PICK_ATTRS = ['id', 'title', 'fileUrl', 'thumbnailUrl', 'duration', 'type', 'status', 'trainerId']
@@ -381,11 +388,48 @@ router.delete('/:id/exercises/:exerciseId', async (req, res) => {
             return err(res, { code: 'NOT_FOUND', message: 'Exercise not found' }, 404)
         }
 
-        await exercise.destroy()
+        const exerciseId = exercise.id
+        const planId = workoutPlan.id
 
-        // Update total exercises count
-        workoutPlan.totalExercises = await WorkoutExercise.count({ where: { workoutPlanId: workoutPlan.id } })
-        await workoutPlan.save()
+        await sequelize.transaction(async (transaction) => {
+            await UserExerciseProgress.destroy({
+                where: { exerciseId },
+                transaction
+            })
+
+            await exercise.destroy({ transaction })
+
+            const newTotal = await WorkoutExercise.count({
+                where: { workoutPlanId: planId },
+                transaction
+            })
+
+            workoutPlan.totalExercises = newTotal
+            await workoutPlan.save({ transaction })
+
+            const progresses = await UserWorkoutPlanProgress.findAll({
+                where: { workoutPlanId: planId },
+                transaction
+            })
+
+            for (const p of progresses) {
+                const completedCount = await UserExerciseProgress.count({
+                    where: {
+                        userId: p.userId,
+                        workoutPlanId: planId,
+                        completed: true
+                    },
+                    transaction
+                })
+                p.totalExercises = newTotal
+                p.completedExercises = completedCount
+                if (p.status === 'completed' && newTotal > 0 && completedCount < newTotal) {
+                    p.status = 'active'
+                    p.completedAt = null
+                }
+                await p.save({ transaction })
+            }
+        })
 
         ok(res, { deleted: true })
     } catch (error) {
