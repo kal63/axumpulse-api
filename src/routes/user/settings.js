@@ -5,6 +5,7 @@ const router = express.Router()
 const { ok, err } = require('../../utils/errors')
 const { User, UserProfile } = require('../../models')
 const { requireAuth } = require('../../middleware')
+const { mergeAiContextSharing } = require('../../utils/defaultAiContextSharing')
 
 // All settings routes require authentication
 router.use(requireAuth)
@@ -39,7 +40,8 @@ router.get('/', async (req, res) => {
                 theme: profile?.preferences?.theme || 'system',
                 units: profile?.preferences?.units || 'metric',
                 timeFormat: profile?.preferences?.timeFormat || '12h',
-                dateFormat: profile?.preferences?.dateFormat || 'MM/DD/YYYY'
+                dateFormat: profile?.preferences?.dateFormat || 'MM/DD/YYYY',
+                aiContextSharing: mergeAiContextSharing(profile?.preferences?.aiContextSharing)
             },
             notifications: profile ? profile.toJSON().notificationSettings : {
                 email: {
@@ -112,13 +114,20 @@ router.put('/', async (req, res) => {
         const profileUpdates = {}
 
         if (preferences) {
-            profileUpdates.language = preferences.language
+            const existingProfile = await UserProfile.findOne({ where: { userId } })
+            const prev = existingProfile?.preferences && typeof existingProfile.preferences === 'object'
+                ? existingProfile.preferences
+                : {}
+            profileUpdates.language = preferences.language !== undefined ? preferences.language : existingProfile?.language
             profileUpdates.preferences = {
-                theme: preferences.theme,
-                units: preferences.units,
-                timeFormat: preferences.timeFormat,
-                dateFormat: preferences.dateFormat,
-                workout: preferences.workout || {}
+                theme: preferences.theme !== undefined ? preferences.theme : prev.theme,
+                units: preferences.units !== undefined ? preferences.units : prev.units,
+                timeFormat: preferences.timeFormat !== undefined ? preferences.timeFormat : prev.timeFormat,
+                dateFormat: preferences.dateFormat !== undefined ? preferences.dateFormat : prev.dateFormat,
+                workout: preferences.workout !== undefined ? preferences.workout : (prev.workout || {}),
+                aiContextSharing: preferences.aiContextSharing !== undefined
+                    ? mergeAiContextSharing({ ...prev.aiContextSharing, ...preferences.aiContextSharing })
+                    : mergeAiContextSharing(prev.aiContextSharing)
             }
         }
 
@@ -131,8 +140,15 @@ router.put('/', async (req, res) => {
             profileUpdates.healthMetrics = fitness.healthMetrics
 
             if (fitness.workoutPreferences) {
+                const p = await UserProfile.findOne({ where: { userId } })
+                const prevPref = p?.preferences && typeof p.preferences === 'object' ? p.preferences : {}
                 profileUpdates.preferences = {
-                    ...profileUpdates.preferences,
+                    ...(profileUpdates.preferences || prevPref),
+                    theme: profileUpdates.preferences?.theme ?? prevPref.theme,
+                    units: profileUpdates.preferences?.units ?? prevPref.units,
+                    timeFormat: profileUpdates.preferences?.timeFormat ?? prevPref.timeFormat,
+                    dateFormat: profileUpdates.preferences?.dateFormat ?? prevPref.dateFormat,
+                    aiContextSharing: profileUpdates.preferences?.aiContextSharing ?? mergeAiContextSharing(prevPref.aiContextSharing),
                     workout: fitness.workoutPreferences
                 }
             }

@@ -51,6 +51,8 @@ const WorkoutPlanInsight = require('./WorkoutPlanInsight')(sequelize, DataTypes)
 const SubscriptionPlan = require('./SubscriptionPlan')(sequelize, DataTypes)
 const UserSubscription = require('./UserSubscription')(sequelize, DataTypes)
 const PaymentTransaction = require('./PaymentTransaction')(sequelize, DataTypes)
+const TraineeAiThread = require('./TraineeAiThread')(sequelize, DataTypes)
+const TraineeAiMessage = require('./TraineeAiMessage')(sequelize, DataTypes)
 
 const models = {
     Language,
@@ -99,7 +101,9 @@ const models = {
     SubscriptionPlan,
     UserSubscription,
     PaymentTransaction,
-    Subscription
+    Subscription,
+    TraineeAiThread,
+    TraineeAiMessage
 }
 
 // Associations

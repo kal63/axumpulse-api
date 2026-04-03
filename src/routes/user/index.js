@@ -16,6 +16,8 @@ const { router: gamesRouter } = require('./games')
 const { router: leaderboardRouter } = require('./leaderboard')
 const medicalRouter = require('./medical')
 const languagesRouter = require('./languages')
+const { router: traineeRouter } = require('./trainee')
+const { router: aiChatRouter } = require('./ai-chat')
 
 // Mount routes
 router.use('/content', contentRouter)
@@ -30,6 +32,8 @@ router.use('/games', gamesRouter)
 router.use('/leaderboard', leaderboardRouter)
 router.use('/medical', medicalRouter)
 router.use('/languages', languagesRouter)
+router.use('/trainee', traineeRouter)
+router.use('/ai-chat', aiChatRouter)
 
 module.exports = router
 
