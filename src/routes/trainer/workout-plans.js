@@ -10,6 +10,7 @@ const {
     Content,
     UserExerciseProgress,
     UserWorkoutPlanProgress,
+    WorkoutPlanInsight,
     sequelize
 } = require('../../models')
 const { resolveApprovedVideoContentId } = require('../../utils/validateTrainerVideoContent')
@@ -229,15 +230,27 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const trainerId = req.user?.id
+        const planId = parseInt(req.params.id, 10)
         const workoutPlan = await WorkoutPlan.findOne({
-            where: { id: req.params.id, trainerId }
+            where: { id: planId, trainerId }
         })
 
         if (!workoutPlan) {
             return err(res, { code: 'NOT_FOUND', message: 'Workout plan not found' }, 404)
         }
 
-        await workoutPlan.destroy()
+        await sequelize.transaction(async (transaction) => {
+            await UserExerciseProgress.destroy({
+                where: { workoutPlanId: planId },
+                transaction
+            })
+            await WorkoutPlanInsight.destroy({
+                where: { workoutPlanId: planId },
+                transaction
+            })
+            await workoutPlan.destroy({ transaction })
+        })
+
         ok(res, { deleted: true })
     } catch (error) {
         err(res, error)
