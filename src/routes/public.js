@@ -6,6 +6,13 @@ const { Challenge, Trainer, User, TrainerApplication, CertificationFile, Trainer
 // Public root
 router.get('/', (req, res) => ok(res, { message: 'Public API root' }));
 
+// GET /public/client-config — non-secret flags for web/mobile (e.g. whether dev quick-login is allowed)
+router.get('/client-config', (req, res) => {
+    ok(res, {
+        devLoginEnabled: process.env.ENABLE_DEV_LOGIN === 'true',
+    });
+});
+
 // GET /public/challenges - list public, active challenges
 router.get('/challenges', async (req, res) => {
     try {
