@@ -69,6 +69,17 @@ async function startServer() {
         setupSocketHandlers(io);
         console.log('✅ Socket.io initialized');
 
+        server.on('error', (err) => {
+            if (err.code === 'EACCES') {
+                console.error(
+                    `❌ Cannot listen on port ${PORT} (EACCES). On Windows, this port may be in an excluded range — run: netsh interface ipv4 show excludedportrange protocol=tcp — then set PORT in .env to a port outside those ranges (e.g. 4000).`
+                );
+            } else {
+                console.error('❌ HTTP server error:', err.message);
+            }
+            process.exit(1);
+        });
+
         // Start the server
         server.listen(PORT, () => {
             console.log(`🚀 API listening on port ${PORT}`);
