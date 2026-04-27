@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
             },
             preferences: {
                 language: profile?.language || 'en',
-                theme: profile?.preferences?.theme || 'system',
+                theme: profile?.preferences?.theme || 'light',
                 units: profile?.preferences?.units || 'metric',
                 timeFormat: profile?.preferences?.timeFormat || '12h',
                 dateFormat: profile?.preferences?.dateFormat || 'MM/DD/YYYY',
@@ -230,7 +230,7 @@ router.get('/preferences', async (req, res) => {
 
         const preferences = {
             language: profile?.language || 'en',
-            theme: profile?.preferences?.theme || 'system',
+            theme: profile?.preferences?.theme || 'light',
             units: profile?.preferences?.units || 'metric',
             timeFormat: profile?.preferences?.timeFormat || '12h',
             dateFormat: profile?.preferences?.dateFormat || 'MM/DD/YYYY',
