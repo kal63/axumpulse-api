@@ -53,6 +53,8 @@ const UserSubscription = require('./UserSubscription')(sequelize, DataTypes)
 const PaymentTransaction = require('./PaymentTransaction')(sequelize, DataTypes)
 const TraineeAiThread = require('./TraineeAiThread')(sequelize, DataTypes)
 const TraineeAiMessage = require('./TraineeAiMessage')(sequelize, DataTypes)
+const EthiotellProductPlan = require('./EthiotellProductPlan')(sequelize, DataTypes)
+const TelcoPendingRegistration = require('./TelcoPendingRegistration')(sequelize, DataTypes)
 
 const models = {
     Language,
@@ -103,7 +105,9 @@ const models = {
     PaymentTransaction,
     Subscription,
     TraineeAiThread,
-    TraineeAiMessage
+    TraineeAiMessage,
+    EthiotellProductPlan,
+    TelcoPendingRegistration
 }
 
 // Associations

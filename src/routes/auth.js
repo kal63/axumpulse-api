@@ -1,14 +1,16 @@
 'use strict'
 
 const express = require('express')
+const { Transaction } = require('sequelize')
 const router = express.Router()
 const bcrypt = require('bcrypt')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
 const { ok, err } = require('../utils/errors')
-const { User, UserProfile } = require('../models')
+const { sequelize, User, UserProfile, TelcoPendingRegistration } = require('../models')
 const { isValidEthiopianPhone, normalizeEthiopianPhone } = require('../utils/phone')
 const { requireAuth } = require('../middleware/auth')
+const { createActiveSubscriptionForUser } = require('../services/subscriptionService')
 
 const webBridgeCodes = new Map()
 
@@ -84,7 +86,21 @@ router.post('/login', async (req, res) => {
 
         const normalizedPhone = normalizeEthiopianPhone(phone)
         const user = await User.findOne({ where: { phone: normalizedPhone } })
-        if (!user || !user.passwordHash) {
+
+        if (!user) {
+            const pending = await TelcoPendingRegistration.findOne({
+                where: { phone: normalizedPhone, consumedAt: null },
+            })
+            if (pending && (await bcrypt.compare(password, pending.passwordHash))) {
+                return ok(res, {
+                    telcoRegistrationPending: true,
+                    phone: normalizedPhone,
+                })
+            }
+            return err(res, { code: 'INVALID_CREDENTIALS', message: 'Invalid phone or password' }, 401)
+        }
+
+        if (!user.passwordHash) {
             return err(res, { code: 'INVALID_CREDENTIALS', message: 'Invalid phone or password' }, 401)
         }
 
@@ -282,6 +298,170 @@ router.post('/register', async (req, res) => {
     } catch (error) {
         console.error('Registration error:', error)
         return err(res, { code: 'REGISTRATION_FAILED', message: 'Failed to register user', error: error.message }, 500)
+    }
+})
+
+// POST /auth/register-telco — complete app account after Ethiotell short-code purchase (pending row)
+router.post('/register-telco', async (req, res) => {
+    try {
+        const {
+            phone,
+            password,
+            telcoPassword,
+            email,
+            name,
+            dateOfBirth,
+            gender,
+        } = req.body || {}
+
+        if (!phone || !password || !telcoPassword) {
+            return err(res, { code: 'BAD_REQUEST', message: 'phone, password, and telcoPassword are required' }, 400)
+        }
+
+        if (!isValidEthiopianPhone(phone)) {
+            return err(res, { code: 'VALIDATION_ERROR', message: 'Phone number must be a valid Ethiopian phone number (+251XXXXXXXXX)' }, 400)
+        }
+
+        const normalizedPhone = normalizeEthiopianPhone(phone)
+
+        const existingUser = await User.findOne({ where: { phone: normalizedPhone } })
+        if (existingUser) {
+            return err(res, { code: 'USER_EXISTS', message: 'User with this phone number already exists' }, 400)
+        }
+
+        if (email) {
+            const existingEmail = await User.findOne({ where: { email } })
+            if (existingEmail) {
+                return err(res, { code: 'EMAIL_EXISTS', message: 'User with this email already exists' }, 400)
+            }
+        }
+
+        const passwordHash = await bcrypt.hash(password, 10)
+
+        let result
+        try {
+            result = await sequelize.transaction(async (t) => {
+                const lockedPending = await TelcoPendingRegistration.findOne({
+                    where: { phone: normalizedPhone, consumedAt: null },
+                    lock: Transaction.LOCK.UPDATE,
+                    transaction: t,
+                })
+                if (!lockedPending) {
+                    const e = new Error('No pending Ethiotell registration for this phone')
+                    e.code = 'NO_PENDING_TELCO'
+                    throw e
+                }
+
+                const telcoOk = await bcrypt.compare(String(telcoPassword), lockedPending.passwordHash)
+                if (!telcoOk) {
+                    const e = new Error('Ethiotell password does not match')
+                    e.code = 'INVALID_TELCO_PASSWORD'
+                    throw e
+                }
+
+                const dupUser = await User.findOne({
+                    where: { phone: normalizedPhone },
+                    transaction: t,
+                    lock: Transaction.LOCK.UPDATE,
+                })
+                if (dupUser) {
+                    const e = new Error('User with this phone number already exists')
+                    e.code = 'USER_EXISTS'
+                    throw e
+                }
+
+                const user = await User.create(
+                    {
+                        phone: normalizedPhone,
+                        email: email || null,
+                        passwordHash,
+                        name: name || null,
+                        dateOfBirth: dateOfBirth || null,
+                        gender: gender || null,
+                        isAdmin: false,
+                        isTrainer: false,
+                        isMedical: false,
+                        status: 'active',
+                    },
+                    { transaction: t }
+                )
+
+                await UserProfile.create(
+                    {
+                        userId: user.id,
+                        totalXp: 0,
+                        challengesCompleted: 0,
+                        workoutsCompleted: 0,
+                        dailyChallengeStreak: 0,
+                        subscriptionTier: 'premium',
+                        language: 'en',
+                        notificationSettings: {},
+                        fitnessGoals: {},
+                        healthMetrics: {},
+                        preferences: {},
+                    },
+                    { transaction: t }
+                )
+
+                await createActiveSubscriptionForUser({
+                    userId: user.id,
+                    trainerId: lockedPending.trainerId,
+                    subscriptionPlanId: lockedPending.subscriptionPlanId,
+                    duration: lockedPending.duration,
+                    lastPaymentReference: `ETHIOTELL-${lockedPending.id}-${Date.now()}`,
+                    startedAt: new Date(),
+                    transaction: t,
+                })
+
+                await lockedPending.update(
+                    {
+                        consumedAt: new Date(),
+                        consumedUserId: user.id,
+                    },
+                    { transaction: t }
+                )
+
+                return user
+            })
+        } catch (e) {
+            if (e.code === 'NO_PENDING_TELCO') {
+                return err(res, { code: 'NO_PENDING_TELCO', message: e.message }, 400)
+            }
+            if (e.code === 'INVALID_TELCO_PASSWORD') {
+                return err(res, { code: 'INVALID_TELCO_PASSWORD', message: e.message }, 401)
+            }
+            if (e.code === 'USER_EXISTS') {
+                return err(res, { code: 'USER_EXISTS', message: e.message }, 400)
+            }
+            throw e
+        }
+
+        const token = jwt.sign(
+            { id: result.id, isAdmin: result.isAdmin, isTrainer: result.isTrainer },
+            process.env.JWT_SECRET,
+            { expiresIn: '365d' }
+        )
+
+        return ok(res, {
+            token,
+            user: {
+                id: result.id,
+                phone: result.phone,
+                email: result.email,
+                name: result.name,
+                profilePicture: result.profilePicture,
+                dateOfBirth: result.dateOfBirth,
+                gender: result.gender,
+                isAdmin: result.isAdmin,
+                isTrainer: result.isTrainer,
+                status: result.status,
+                createdAt: result.createdAt,
+                updatedAt: result.updatedAt,
+            },
+        })
+    } catch (error) {
+        console.error('register-telco error:', error)
+        return err(res, { code: 'REGISTRATION_FAILED', message: 'Failed to complete registration', error: error.message }, 500)
     }
 })
 

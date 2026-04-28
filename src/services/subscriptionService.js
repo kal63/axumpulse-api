@@ -97,6 +97,71 @@ function quoteSubscriptionChange({ currentSubscription, newPlan, duration, now =
 }
 
 /**
+ * Create an active user subscription (same rules as post-payment activation).
+ * @param {Object} opts
+ * @param {number} opts.userId
+ * @param {number} opts.trainerId
+ * @param {number} opts.subscriptionPlanId
+ * @param {string} [opts.duration]
+ * @param {string|null} [opts.lastPaymentReference] tx ref or telco marker
+ * @param {Date} [opts.startedAt]
+ * @param {import('sequelize').Transaction} [opts.transaction]
+ */
+async function createActiveSubscriptionForUser({
+    userId,
+    trainerId,
+    subscriptionPlanId,
+    duration = 'monthly',
+    lastPaymentReference = null,
+    startedAt = new Date(),
+    transaction = undefined,
+}) {
+    if (!subscriptionPlanId || !trainerId) {
+        const error = new Error('Subscription plan ID and trainer ID are required')
+        throw error
+    }
+
+    const user = await User.findByPk(userId, { transaction })
+    const plan = await SubscriptionPlan.findByPk(subscriptionPlanId, { transaction })
+
+    if (!user) {
+        throw new Error(`User not found: ${userId}`)
+    }
+    if (!plan) {
+        throw new Error(`Subscription plan not found: ${subscriptionPlanId}`)
+    }
+
+    const now = new Date(startedAt)
+    const expiresAt = calculateExpirationDate(duration, now)
+
+    await UserSubscription.update(
+        { status: 'cancelled' },
+        {
+            where: {
+                userId: user.id,
+                trainerId,
+                status: 'active',
+            },
+            transaction,
+        }
+    )
+
+    return UserSubscription.create(
+        {
+            userId: user.id,
+            trainerId,
+            subscriptionPlanId: plan.id,
+            duration,
+            startedAt: now,
+            expiresAt,
+            status: 'active',
+            lastPaymentReference,
+        },
+        { transaction }
+    )
+}
+
+/**
  * Activate user subscription after payment
  * @param {Object} transaction - PaymentTransaction object
  * @param {string} duration - Subscription duration
@@ -119,56 +184,15 @@ async function activateSubscription(transaction, duration = 'monthly') {
         throw error
     }
 
-    const user = await User.findByPk(transaction.userId)
-    const plan = await SubscriptionPlan.findByPk(transaction.subscriptionPlanId)
-
-    if (!user) {
-        const error = new Error(`User not found: ${transaction.userId}`)
-        console.error('[activateSubscription] User not found:', transaction.userId)
-        throw error
-    }
-
-    if (!plan) {
-        const error = new Error(`Subscription plan not found: ${transaction.subscriptionPlanId}`)
-        console.error('[activateSubscription] Plan not found:', transaction.subscriptionPlanId)
-        throw error
-    }
-
-    const now = new Date()
-    const expiresAt = calculateExpirationDate(duration, now)
-
-    console.log('[activateSubscription] Calculated expiration:', {
-        duration: duration,
-        startedAt: now,
-        expiresAt: expiresAt
-    })
-
-    // Cancel any existing active subscription to the same trainer
-    const cancelledCount = await UserSubscription.update(
-        { status: 'cancelled' },
-        {
-            where: {
-                userId: user.id,
-                trainerId: transaction.trainerId,
-                status: 'active',
-            }
-        }
-    )
-    console.log('[activateSubscription] Cancelled existing subscriptions:', cancelledCount[0])
-
-    // Create new subscription
     try {
-        const subscription = await UserSubscription.create({
-            userId: user.id,
+        const subscription = await createActiveSubscriptionForUser({
+            userId: transaction.userId,
             trainerId: transaction.trainerId,
-            subscriptionPlanId: plan.id,
-            duration: duration,
-            startedAt: now,
-            expiresAt: expiresAt,
-            status: 'active',
+            subscriptionPlanId: transaction.subscriptionPlanId,
+            duration,
             lastPaymentReference: transaction.txRef,
+            startedAt: new Date(),
         })
-
         console.log('[activateSubscription] Subscription created successfully:', {
             subscriptionId: subscription.id,
             userId: subscription.userId,
@@ -176,18 +200,11 @@ async function activateSubscription(transaction, duration = 'monthly') {
             planId: subscription.subscriptionPlanId,
             expiresAt: subscription.expiresAt
         })
-
         return subscription
     } catch (createError) {
         console.error('[activateSubscription] Failed to create subscription:', {
             error: createError.message,
             stack: createError.stack,
-            data: {
-                userId: user.id,
-                trainerId: transaction.trainerId,
-                subscriptionPlanId: plan.id,
-                duration: duration
-            }
         })
         throw createError
     }
@@ -387,6 +404,7 @@ async function changeUserSubscriptionTrainer({
 
 module.exports = {
     activateSubscription,
+    createActiveSubscriptionForUser,
     getUserSubscription,
     cancelSubscription,
     hasActiveSubscription,
