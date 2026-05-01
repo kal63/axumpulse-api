@@ -16,7 +16,10 @@ const medicalApplyRoutes = require('./routes/medical/apply');
 const subscriptionRoutes = require('./routes/subscription');
 const paymentRoutes = require('./routes/payment/paymentRoutes');
 // const { verifyEthiotellWebhookSignature } = require('./middleware/ethiotellWebhookAuth');
-const { postWebhook: ethiotellPostWebhook } = require('./routes/integrations/ethiotell');
+const {
+    postSubscribe: ethiotellPostSubscribe,
+    postUnsubscribe: ethiotellPostUnsubscribe,
+} = require('./routes/integrations/ethiotell');
 
 const app = express();
 
@@ -27,10 +30,10 @@ app.use(morgan('dev'));
 /*
 // Ethiotell (legacy): raw body + HMAC — had to run before express.json()
 app.post(
-    '/api/v1/integrations/ethiotell/webhook',
+    '/api/v1/integrations/ethiotell/subscribe',
     express.raw({ type: 'application/json', limit: '256kb' }),
     verifyEthiotellWebhookSignature,
-    ethiotellPostWebhook
+    ethiotellPostSubscribe
 );
 */
 
@@ -63,7 +66,9 @@ app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 
 // Ethiotell: open JSON POST (uses req.body from express.json above)
-app.post('/api/v1/integrations/ethiotell/webhook', ethiotellPostWebhook);
+// app.post('/api/v1/integrations/ethiotell/webhook', ethiotellPostSubscribe); // renamed → /subscribe
+app.post('/api/v1/integrations/ethiotell/subscribe', ethiotellPostSubscribe);
+app.post('/api/v1/integrations/ethiotell/unsubscribe', ethiotellPostUnsubscribe);
 
 module.exports = app;
 

@@ -4,13 +4,14 @@ const { ok, err } = require('../../utils/errors')
 const { User, SubscriptionPlan } = require('../../models')
 const { isValidEthiopianPhone, normalizeEthiopianPhone } = require('../../utils/phone')
 const { resolveActiveProductMapping, upsertTelcoPending } = require('../../services/ethiotellService')
+const { cancelSubscription } = require('../../services/subscriptionService')
 
 /**
- * POST /api/v1/integrations/ethiotell/webhook
- * JSON body (parsed by express.json): { phone_number, password, product_number }
+ * POST /api/v1/integrations/ethiotell/subscribe
+ * JSON body: { phone_number, password, product_number }
  * Legacy fields (still accepted if present): phone, planinfo, productCode, etc.
  */
-async function postWebhook(req, res) {
+async function postSubscribe(req, res) {
     try {
         const body = req.body || {}
         const phoneRaw =
@@ -77,11 +78,53 @@ async function postWebhook(req, res) {
             productCode: pending.productCode,
         })
     } catch (e) {
-        console.error('[Ethiotell webhook]', e)
-        return err(res, { code: 'INTERNAL_ERROR', message: e.message || 'Webhook failed' }, 500)
+        console.error('[Ethiotell subscribe]', e)
+        return err(res, { code: 'INTERNAL_ERROR', message: e.message || 'Subscribe webhook failed' }, 500)
+    }
+}
+
+/**
+ * POST /api/v1/integrations/ethiotell/unsubscribe
+ * JSON body: { phone_number } — sets all `user_subscriptions` with status `active` for that user to `cancelled`.
+ */
+async function postUnsubscribe(req, res) {
+    try {
+        const body = req.body || {}
+        const phoneRaw =
+            body.phone_number ??
+            body.phoneNumber ??
+            body.phone ??
+            body.userPhone ??
+            body.msisdn ??
+            body.mobilenumber
+
+        if (!phoneRaw) {
+            return err(res, { code: 'BAD_REQUEST', message: 'phone_number is required' }, 400)
+        }
+
+        const normalizedPhone = normalizeEthiopianPhone(String(phoneRaw))
+        if (!normalizedPhone || !isValidEthiopianPhone(normalizedPhone)) {
+            return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid Ethiopian phone number' }, 400)
+        }
+
+        const user = await User.findOne({ where: { phone: normalizedPhone } })
+        if (!user) {
+            return err(res, { code: 'NOT_FOUND', message: 'No user found for this phone number' }, 404)
+        }
+
+        const cancelled = await cancelSubscription(user.id)
+        return ok(res, {
+            unsubscribed: true,
+            phone: normalizedPhone,
+            cancelledActiveSubscriptions: cancelled,
+        })
+    } catch (e) {
+        console.error('[Ethiotell unsubscribe]', e)
+        return err(res, { code: 'INTERNAL_ERROR', message: e.message || 'Unsubscribe webhook failed' }, 500)
     }
 }
 
 module.exports = {
-    postWebhook,
+    postSubscribe,
+    postUnsubscribe,
 }
