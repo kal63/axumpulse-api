@@ -30,7 +30,7 @@ app.use(morgan('dev'));
 /*
 // Ethiotell (legacy): raw body + HMAC — had to run before express.json()
 app.post(
-    '/api/v1/integrations/ethiotell/subscribe',
+    '/api/v1/integrations/ethiotel/subscribe',
     express.raw({ type: 'application/json', limit: '256kb' }),
     verifyEthiotellWebhookSignature,
     ethiotellPostSubscribe
@@ -66,9 +66,9 @@ app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 
 // Ethiotell: open JSON POST (uses req.body from express.json above)
-// app.post('/api/v1/integrations/ethiotell/webhook', ethiotellPostSubscribe); // renamed → /subscribe
-app.post('/api/v1/integrations/ethiotell/subscribe', ethiotellPostSubscribe);
-app.post('/api/v1/integrations/ethiotell/unsubscribe', ethiotellPostUnsubscribe);
+// app.post('/api/v1/integrations/ethiotel/webhook', ethiotellPostSubscribe); // renamed → /subscribe
+app.post('/api/v1/integrations/ethiotel/subscribe', ethiotellPostSubscribe);
+app.post('/api/v1/integrations/ethiotel/unsubscribe', ethiotellPostUnsubscribe);
 
 module.exports = app;
 

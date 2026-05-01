@@ -7,7 +7,7 @@ const { resolveActiveProductMapping, upsertTelcoPending } = require('../../servi
 const { cancelSubscription } = require('../../services/subscriptionService')
 
 /**
- * POST /api/v1/integrations/ethiotell/subscribe
+ * POST /api/v1/integrations/ethiotel/subscribe
  * JSON body: { phone_number, password, product_number }
  * Legacy fields (still accepted if present): phone, planinfo, productCode, etc.
  */
@@ -84,7 +84,7 @@ async function postSubscribe(req, res) {
 }
 
 /**
- * POST /api/v1/integrations/ethiotell/unsubscribe
+ * POST /api/v1/integrations/ethiotel/unsubscribe
  * JSON body: { phone_number } — sets all `user_subscriptions` with status `active` for that user to `cancelled`.
  */
 async function postUnsubscribe(req, res) {
