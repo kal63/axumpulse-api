@@ -1,5 +1,16 @@
 'use strict'
 
+/**
+ * Ethiotell webhook HMAC verification — DISABLED (no `X-Ethiotell-Signature` required).
+ * The previous implementation is preserved below in a block comment for easy restore.
+ */
+function verifyEthiotellWebhookSignature(req, res, next) {
+    return next()
+}
+
+/*
+'use strict'
+
 const crypto = require('crypto')
 const { err } = require('../utils/errors')
 
@@ -23,9 +34,6 @@ function ipAllowed(req) {
     return allowed.some((a) => ip === a || ip.endsWith(a))
 }
 
-/**
- * Expects `express.raw` body (Buffer). Sets req.ethiotellBodyParsed = object.
- */
 function verifyEthiotellWebhookSignature(req, res, next) {
     if (!ipAllowed(req)) {
         return err(res, { code: 'FORBIDDEN', message: 'IP not allowed' }, 403)
@@ -65,6 +73,7 @@ function verifyEthiotellWebhookSignature(req, res, next) {
     req.ethiotellBodyParsed = parsed
     return next()
 }
+*/
 
 module.exports = {
     verifyEthiotellWebhookSignature,

@@ -7,33 +7,46 @@ const { resolveActiveProductMapping, upsertTelcoPending } = require('../../servi
 
 /**
  * POST /api/v1/integrations/ethiotell/webhook
- * Body JSON: { phone, password, planinfo } (field names flexible)
+ * JSON body (parsed by express.json): { phone_number, password, product_number }
+ * Legacy fields (still accepted if present): phone, planinfo, productCode, etc.
  */
 async function postWebhook(req, res) {
     try {
-        const body = req.ethiotellBodyParsed || {}
-        const phone = body.phone ?? body.userPhone ?? body.msisdn ?? body.mobilenumber
+        const body = req.body || {}
+        const phoneRaw =
+            body.phone_number ??
+            body.phoneNumber ??
+            body.phone ??
+            body.userPhone ??
+            body.msisdn ??
+            body.mobilenumber
         const password = body.password ?? body.telcoPassword ?? body.pin
-        const planinfo = body.planinfo ?? body.planInfo ?? body.productCode ?? body.code
+        const productNumber =
+            body.product_number ??
+            body.productNumber ??
+            body.planinfo ??
+            body.planInfo ??
+            body.productCode ??
+            body.code
 
-        if (!phone || !password || planinfo == null || String(planinfo).trim() === '') {
+        if (!phoneRaw || !password || productNumber == null || String(productNumber).trim() === '') {
             return err(
                 res,
-                { code: 'BAD_REQUEST', message: 'phone, password, and planinfo are required' },
+                { code: 'BAD_REQUEST', message: 'phone_number, password, and product_number are required' },
                 400
             )
         }
 
-        if (!isValidEthiopianPhone(phone)) {
+        const normalizedPhone = normalizeEthiopianPhone(String(phoneRaw))
+        if (!normalizedPhone || !isValidEthiopianPhone(normalizedPhone)) {
             return err(res, { code: 'VALIDATION_ERROR', message: 'Invalid Ethiopian phone number' }, 400)
         }
 
-        const normalizedPhone = normalizeEthiopianPhone(phone)
-        const productCode = String(planinfo).trim()
+        const productCode = String(productNumber).trim()
 
         const mapping = await resolveActiveProductMapping(productCode)
         if (!mapping) {
-            return err(res, { code: 'UNKNOWN_PRODUCT', message: 'Unknown planinfo product code' }, 400)
+            return err(res, { code: 'UNKNOWN_PRODUCT', message: 'Unknown product_number' }, 400)
         }
 
         const plan = await SubscriptionPlan.findByPk(mapping.subscriptionPlanId)
@@ -41,9 +54,11 @@ async function postWebhook(req, res) {
             return err(res, { code: 'BAD_REQUEST', message: 'Subscription plan is missing or inactive' }, 400)
         }
 
-        const trainer = await User.findByPk(mapping.trainerId)
-        if (!trainer || !trainer.isTrainer) {
-            return err(res, { code: 'BAD_REQUEST', message: 'Trainer is missing or invalid for this product code' }, 400)
+        if (mapping.trainerId != null) {
+            const trainer = await User.findByPk(mapping.trainerId)
+            if (!trainer || !trainer.isTrainer) {
+                return err(res, { code: 'BAD_REQUEST', message: 'Trainer is missing or invalid for this product' }, 400)
+            }
         }
 
         const pending = await upsertTelcoPending({

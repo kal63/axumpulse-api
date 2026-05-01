@@ -23,7 +23,7 @@ async function resolveActiveProductMapping(productCode) {
  * @param {string} opts.telcoPasswordPlain
  * @param {string} opts.productCode
  * @param {number} opts.subscriptionPlanId
- * @param {number} opts.trainerId
+ * @param {number|null|undefined} opts.trainerId
  * @param {string} opts.duration
  * @param {object} [opts.rawPayload]
  */

@@ -403,9 +403,24 @@ router.post('/register-telco', async (req, res) => {
                     { transaction: t }
                 )
 
+                let trainerIdForSub = lockedPending.trainerId
+                if (!trainerIdForSub) {
+                    const fallbackTrainer = await User.findOne({
+                        where: { isTrainer: true },
+                        order: [['id', 'ASC']],
+                        transaction: t,
+                    })
+                    if (!fallbackTrainer) {
+                        const e = new Error('No trainer available to attach subscription')
+                        e.code = 'NO_TRAINER_FOR_TELCO'
+                        throw e
+                    }
+                    trainerIdForSub = fallbackTrainer.id
+                }
+
                 await createActiveSubscriptionForUser({
                     userId: user.id,
-                    trainerId: lockedPending.trainerId,
+                    trainerId: trainerIdForSub,
                     subscriptionPlanId: lockedPending.subscriptionPlanId,
                     duration: lockedPending.duration,
                     lastPaymentReference: `ETHIOTELL-${lockedPending.id}-${Date.now()}`,
@@ -432,6 +447,9 @@ router.post('/register-telco', async (req, res) => {
             }
             if (e.code === 'USER_EXISTS') {
                 return err(res, { code: 'USER_EXISTS', message: e.message }, 400)
+            }
+            if (e.code === 'NO_TRAINER_FOR_TELCO') {
+                return err(res, { code: 'NO_TRAINER_FOR_TELCO', message: e.message }, 500)
             }
             throw e
         }

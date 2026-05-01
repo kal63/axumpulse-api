@@ -15,7 +15,7 @@ const medicalRoutes = require('./routes/medical');
 const medicalApplyRoutes = require('./routes/medical/apply');
 const subscriptionRoutes = require('./routes/subscription');
 const paymentRoutes = require('./routes/payment/paymentRoutes');
-const { verifyEthiotellWebhookSignature } = require('./middleware/ethiotellWebhookAuth');
+// const { verifyEthiotellWebhookSignature } = require('./middleware/ethiotellWebhookAuth');
 const { postWebhook: ethiotellPostWebhook } = require('./routes/integrations/ethiotell');
 
 const app = express();
@@ -24,13 +24,15 @@ const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : '*' }));
 app.use(morgan('dev'));
 
-// Ethiotell: raw body required for HMAC — must run before express.json()
+/*
+// Ethiotell (legacy): raw body + HMAC — had to run before express.json()
 app.post(
     '/api/v1/integrations/ethiotell/webhook',
     express.raw({ type: 'application/json', limit: '256kb' }),
     verifyEthiotellWebhookSignature,
     ethiotellPostWebhook
 );
+*/
 
 // Increase payload limits for file uploads
 app.use(express.json({ limit: '500mb' }));
@@ -59,6 +61,9 @@ app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/public', publicRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/payments', paymentRoutes);
+
+// Ethiotell: open JSON POST (uses req.body from express.json above)
+app.post('/api/v1/integrations/ethiotell/webhook', ethiotellPostWebhook);
 
 module.exports = app;
 

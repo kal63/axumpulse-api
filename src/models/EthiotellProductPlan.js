@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
       },
       trainerId: {
         type: DataTypes.INTEGER,
-        allowNull: false
+        allowNull: true
       },
       duration: {
         type: DataTypes.ENUM('daily', 'monthly', 'threeMonth', 'sixMonth', 'nineMonth', 'yearly'),
